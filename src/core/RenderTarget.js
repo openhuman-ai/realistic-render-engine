@@ -1,8 +1,14 @@
 /**
  * RenderTarget — off-screen framebuffer with MRT colour attachments and an
- * optional depth/stencil renderbuffer.  Supports MSAA via the `samples` option.
+ * optional depth/stencil renderbuffer or depth texture.  Supports MSAA via
+ * the `samples` option.
  *
- * Colour format options: 'RGBA8' | 'RGBA16F' | 'RGBA32F'
+ * Colour format options: 'RGBA8' | 'RGBA16F' | 'RGBA32F' | 'R32F'
+ *
+ * Depth options:
+ *   depthAttachment: true   → depth+stencil renderbuffer (default)
+ *   depthTexture: true      → DEPTH_COMPONENT32F texture (sampleable; mutually
+ *                              exclusive with depthAttachment renderbuffer path)
  */
 export class RenderTarget {
   /**
@@ -10,8 +16,9 @@ export class RenderTarget {
    * @param {{
    *   width: number,
    *   height: number,
-   *   colorAttachments?: Array<'RGBA8'|'RGBA16F'|'RGBA32F'>,
+   *   colorAttachments?: Array<'RGBA8'|'RGBA16F'|'RGBA32F'|'R32F'>,
    *   depthAttachment?: boolean,
+   *   depthTexture?: boolean,
    *   samples?: number
    * }} opts
    */
@@ -20,10 +27,14 @@ export class RenderTarget {
     this.width  = opts.width  ?? 1;
     this.height = opts.height ?? 1;
     this.samples = opts.samples ?? 0;
-    this._colorFmts = opts.colorAttachments ?? ['RGBA8'];
-    this._wantDepth = opts.depthAttachment  ?? true;
+    this._colorFmts  = opts.colorAttachments ?? ['RGBA8'];
+    this._wantDepth  = opts.depthAttachment  ?? true;
+    this._wantDepthTex = opts.depthTexture   ?? false;
+    // depthTexture takes priority over depthAttachment renderbuffer
+    if (this._wantDepthTex) this._wantDepth = false;
 
     this._colorTextures = [];
+    this._depthTexture  = null;
     this._depthRBO = null;
     this._fbo = null;
 
@@ -55,6 +66,22 @@ export class RenderTarget {
       gl.drawBuffers(drawBuffers);
     }
 
+    // ── Depth texture (sampleable, used by shadow maps and depth pre-pass)
+    if (this._wantDepthTex) {
+      this._depthTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this._depthTexture);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT32F, this.width, this.height);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this._depthTexture, 0
+      );
+    }
+
+    // ── Depth renderbuffer (non-sampleable, used for G-buffer and HDR targets)
     if (this._wantDepth) {
       this._depthRBO = gl.createRenderbuffer();
       gl.bindRenderbuffer(gl.RENDERBUFFER, this._depthRBO);
@@ -86,7 +113,17 @@ export class RenderTarget {
     switch (fmt) {
       case 'RGBA16F': return gl.RGBA16F;
       case 'RGBA32F': return gl.RGBA32F;
+      case 'R32F':    return gl.R32F;
       default:        return gl.RGBA8;
+    }
+  }
+
+  /** @private */
+  _baseFormat(fmt) {
+    const gl = this.gl;
+    switch (fmt) {
+      case 'R32F': return gl.RED;
+      default:     return gl.RGBA;
     }
   }
 
@@ -123,6 +160,14 @@ export class RenderTarget {
   }
 
   /**
+   * Returns the depth texture, if this target was created with depthTexture:true.
+   * @returns {WebGLTexture|null}
+   */
+  getDepthTexture() {
+    return this._depthTexture;
+  }
+
+  /**
    * Resize all attachments.
    * @param {number} w
    * @param {number} h
@@ -133,6 +178,7 @@ export class RenderTarget {
     this.height = h;
     this.destroy();
     this._colorTextures = [];
+    this._depthTexture  = null;
     this._depthRBO = null;
     this._fbo = null;
     this._build();
@@ -141,9 +187,11 @@ export class RenderTarget {
   destroy() {
     const gl = this.gl;
     for (const t of this._colorTextures) gl.deleteTexture(t);
+    if (this._depthTexture) gl.deleteTexture(this._depthTexture);
     if (this._depthRBO) gl.deleteRenderbuffer(this._depthRBO);
     if (this._fbo)      gl.deleteFramebuffer(this._fbo);
     this._colorTextures = [];
+    this._depthTexture  = null;
     this._depthRBO = null;
     this._fbo = null;
   }

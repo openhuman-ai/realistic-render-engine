@@ -3,16 +3,18 @@
  * Zero runtime dependencies
  */
 
-import { GLContext }       from '../core/GLContext.js';
-import { StateCache }      from '../core/StateCache.js';
+import { GLContext }           from '../core/GLContext.js';
+import { StateCache }          from '../core/StateCache.js';
 import { VertexBuffer, IndexBuffer } from '../core/Buffer.js';
-import { ForwardRenderer } from '../renderer/ForwardRenderer.js';
-import { GLTFLoader }      from '../asset/GLTFLoader.js';
-import { Camera }          from '../scene/Camera.js';
-import { Light }           from '../scene/Light.js';
-import { Character }       from '../scene/Character.js';
-import { Node }            from '../scene/Node.js';
-import { Vec3 }            from '../math/Vec3.js';
+import { ForwardRenderer }     from '../renderer/ForwardRenderer.js';
+import { DeferredRenderer }    from '../renderer/DeferredRenderer.js';
+import { ShadowMap }           from '../renderer/ShadowMap.js';
+import { GLTFLoader }          from '../asset/GLTFLoader.js';
+import { Camera }              from '../scene/Camera.js';
+import { Light }               from '../scene/Light.js';
+import { Character }           from '../scene/Character.js';
+import { Node }                from '../scene/Node.js';
+import { Vec3 }                from '../math/Vec3.js';
 
 // Module-level scratch Vec3 for SDK lookAt calls — avoids per-call allocation.
 const _lookAtScratch = new Vec3();
@@ -112,11 +114,12 @@ class OpenHumanInstance {
    * @param {Character} character
    * @param {GLContext} glContext
    * @param {StateCache} stateCache
-   * @param {ForwardRenderer} renderer
+   * @param {DeferredRenderer|ForwardRenderer} renderer
    * @param {Camera} camera
    * @param {Light[]} lights
+   * @param {ShadowMap|null} shadowMap
    */
-  constructor(canvas, character, glContext, stateCache, renderer, camera, lights) {
+  constructor(canvas, character, glContext, stateCache, renderer, camera, lights, shadowMap = null) {
     this._canvas    = canvas;
     this._character = character;
     this._glContext = glContext;
@@ -124,6 +127,7 @@ class OpenHumanInstance {
     this._renderer  = renderer;
     this._camera    = camera;
     this._lights    = lights;
+    this._shadowMap = shadowMap;
     this._rafId     = null;
     this._events    = {};
     this._exposure  = 1.0;
@@ -162,8 +166,17 @@ class OpenHumanInstance {
     };
 
     this.renderer = {
-      setExposure(v)         { self._exposure = v; /* TODO: apply to tone-map pass */ },
-      setEnvironment(preset) { /* TODO: load IBL / env-map based on preset name */ },
+      setExposure(v) {
+        self._exposure = v;
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setExposure(v);
+        }
+      },
+      setEnvironment(irradianceTex, envTex) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setEnvironment(irradianceTex ?? null, envTex ?? null);
+        }
+      },
       setSSSStrength(v)      { /* TODO: subsurface scattering strength uniform */ },
     };
   }
@@ -214,7 +227,29 @@ class OpenHumanInstance {
     this._lastTs = now;
 
     this._character.update(dt);
-    this._character.render(this._renderer, this._camera, this._lights);
+
+    // Shadow pass (deferred path only)
+    if (this._shadowMap && this._renderer instanceof DeferredRenderer) {
+      const nodes = this._character.node.children;
+      const dirLight = this._lights.find(l => l.type === 'directional');
+      if (dirLight) {
+        this._shadowMap.render(nodes, dirLight, this._character._gpuSkinning);
+      }
+    }
+
+    // Main render
+    if (this._renderer instanceof DeferredRenderer) {
+      this._renderer.render(
+        this._character.node.children,
+        this._camera,
+        this._lights,
+        this._character._gpuSkinning,
+        this._shadowMap
+      );
+    } else {
+      this._character.render(this._renderer, this._camera, this._lights);
+    }
+
     this._emit('frame', ts);
   }
 
@@ -223,6 +258,7 @@ class OpenHumanInstance {
     this._camera.disableOrbit();
     this._character.destroy?.();
     this._renderer.destroy();
+    this._shadowMap?.destroy();
     this._glContext.destroy();
     this._emit('destroy', null);
   }
