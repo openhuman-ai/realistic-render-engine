@@ -132,11 +132,15 @@ class OpenHumanInstance {
     const self = this;
 
     this.animation = {
-      play(name)                       { character.playAnimation(name); },
-      crossFadeTo(name, duration)      { /* TODO */ },
-      setLayer(name, clip, opts)       { /* TODO */ },
-      setFloat(param, value)           { /* TODO */ },
-      setBool(param, value)            { /* TODO */ },
+      play(name)                  { character.playAnimation(name); },
+      crossFadeTo(name, duration) {
+        // Trigger transition via a temporary bool param
+        character.addTransition(character._animGraph?._currentState ?? '', name, '__crossfade__', duration);
+        character.setBool('__crossfade__', true);
+      },
+      setLayer(name, clip, opts)  { /* layer mask support — future PR */ },
+      setFloat(param, value)      { character.setFloat(param, value); },
+      setBool(param, value)       { character.setBool(param, value); },
     };
 
     this.morph = {
@@ -208,6 +212,12 @@ class OpenHumanInstance {
       this._renderer.resize(displayW, displayH);
     }
 
+    // Compute deltaTime
+    const now = performance.now();
+    const dt  = Math.min((now - (this._lastTs ?? now)) / 1000, 0.1); // cap at 100ms
+    this._lastTs = now;
+
+    this._character.update(dt);
     this._character.render(this._renderer, this._camera, this._lights);
     this._emit('frame', ts);
   }
@@ -215,6 +225,7 @@ class OpenHumanInstance {
   destroy() {
     this._stopRenderLoop();
     this._camera.disableOrbit();
+    this._character.destroy?.();
     this._renderer.destroy();
     this._glContext.destroy();
     this._emit('destroy', null);
@@ -259,7 +270,7 @@ export class OpenHuman {
     } else {
       const loader = new GLTFLoader(glContext.gl);
       const data   = await loader.load(assetUrl);
-      character    = new Character(data);
+      character    = new Character(data, glContext.gl);
     }
 
     const instance = new OpenHumanInstance(
@@ -273,3 +284,7 @@ export class OpenHuman {
 // Re-export core modules for advanced use cases
 export { GLContext, StateCache, ForwardRenderer, GLTFLoader, Camera, Light, Character, Node };
 export { VertexBuffer, IndexBuffer };
+export { Skeleton, Joint }    from '../animation/Skeleton.js';
+export { AnimationClip, Pose } from '../animation/AnimationClip.js';
+export { AnimationGraph }      from '../animation/AnimationGraph.js';
+export { GPUSkinning }         from '../animation/GPUSkinning.js';
