@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenHuman Engine — GPU Dual-Quaternion Skinning Demo</title>
+  <title>OpenHuman Engine — Deferred PBR + ACES Demo</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -25,6 +25,7 @@
       gap: 12px;
       z-index: 10;
       border-bottom: 1px solid #333;
+      flex-wrap: wrap;
     }
 
     header h1 {
@@ -57,7 +58,7 @@
     #hud {
       position: absolute;
       top: 12px;
-      right: 14px;
+      left: 14px;
       background: rgba(0,0,0,0.5);
       border-radius: 6px;
       padding: 6px 12px;
@@ -69,7 +70,74 @@
 
     #fps { color: #6ef08a; font-weight: 600; }
     #anim-state { color: #7ec8f8; }
+    #pipeline-label { color: #f0c060; font-weight: 600; }
 
+    /* ── Render controls panel (right side) */
+    #render-controls {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.75rem;
+      color: #ccc;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      min-width: 200px;
+    }
+
+    #render-controls .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #666;
+      border-bottom: 1px solid #333;
+      padding-bottom: 4px;
+      margin-bottom: 2px;
+    }
+
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .ctrl-row label { flex: 1; }
+
+    .toggle-btn {
+      font-size: 0.72rem;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid #4a9d6f;
+      background: rgba(30, 80, 50, 0.85);
+      color: #aaffcc;
+      min-width: 36px;
+      text-align: center;
+    }
+    .toggle-btn.off {
+      border-color: #7a3a3a;
+      background: rgba(70, 30, 30, 0.85);
+      color: #ffaaaa;
+    }
+
+    input[type="range"] {
+      width: 90px;
+      accent-color: #6ef08a;
+      cursor: pointer;
+    }
+
+    #exposure-val {
+      color: #6ef08a;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    /* ── Animation controls (bottom-centre) */
     #controls {
       position: absolute;
       bottom: 60px;
@@ -125,17 +193,58 @@
   <span class="badge">WebGL 2.0</span>
   <span class="badge" style="background:#2c4a8c;">Zero deps</span>
   <span class="badge" style="background:#5a2c8c;">GPU DQ Skinning</span>
+  <!-- Path label — updated at runtime to reflect active renderer -->
+  <span class="badge" id="path-badge" style="background:#7a3c1c;">Deferred PBR · G-buffer · PCF · ACES</span>
 </header>
 
 <div id="canvas-wrapper">
   <canvas id="gl-canvas"></canvas>
 
+  <!-- HUD (top-left) -->
   <div id="hud">
     <div>FPS: <span id="fps">—</span></div>
-    <div>State: <span id="anim-state">—</span></div>
-    <div id="renderer-info">Initialising…</div>
+    <div>Anim: <span id="anim-state">—</span></div>
+    <div>Path: <span id="pipeline-label">—</span></div>
+    <div id="renderer-info" style="color:#888;font-size:0.7rem;">Initialising…</div>
   </div>
 
+  <!-- Render controls (top-right) -->
+  <div id="render-controls">
+    <div class="section-title">Render Controls</div>
+
+    <!-- Exposure -->
+    <div class="ctrl-row">
+      <label>Exposure</label>
+      <input type="range" id="exposure-slider" min="0.1" max="4.0" step="0.05" value="1.0" />
+      <span id="exposure-val">1.00</span>
+    </div>
+
+    <!-- Shadow PCF toggle -->
+    <div class="ctrl-row">
+      <label>Shadows (PCF)</label>
+      <button class="toggle-btn" id="btn-shadow">ON</button>
+    </div>
+
+    <!-- IBL toggle -->
+    <div class="ctrl-row">
+      <label>IBL Ambient</label>
+      <button class="toggle-btn off" id="btn-ibl">OFF</button>
+    </div>
+
+    <!-- ACES tonemap toggle -->
+    <div class="ctrl-row">
+      <label>ACES Tonemap</label>
+      <button class="toggle-btn" id="btn-aces">ON</button>
+    </div>
+
+    <!-- Pipeline toggle: Deferred ↔ Forward -->
+    <div class="ctrl-row">
+      <label>Pipeline</label>
+      <button class="toggle-btn" id="btn-pipeline" style="min-width:68px;">Deferred</button>
+    </div>
+  </div>
+
+  <!-- Animation controls (bottom-centre) -->
   <div id="controls">
     <button id="btn-idle">▶ Idle</button>
     <button id="btn-talk">💬 Talk</button>
@@ -152,23 +261,26 @@
 
 <script type="module">
 /**
- * Animation Demo — GPU Dual-Quaternion Skinning
+ * Deferred PBR Demo — GPU Dual-Quaternion Skinning + G-buffer + ACES
  *
  * Builds a procedural segmented cylinder with 3 joints and a 2-bone rig.
  * Demonstrates:
- *   - Skeleton construction with joint hierarchy
- *   - AnimationClip with LINEAR interpolation
- *   - AnimationGraph idle→talk transition (crossfade)
- *   - GPUSkinning texture upload
- *   - Skinned vertex shader (DQ blend on GPU)
+ *   - Deferred rendering pipeline (G-buffer → PBR lighting → ACES tone-map)
+ *   - PCF shadow mapping from a directional light
+ *   - IBL toggle (hemisphere ambient fallback vs BRDF-LUT IBL)
+ *   - ACES filmic tone-mapping toggle
+ *   - Exposure control
+ *   - Pipeline toggle (Deferred ↔ Forward)
+ *   - GPU dual-quaternion skinning
+ *   - AnimationGraph idle→talk crossfade
  */
 import {
-  OpenHuman,
-  GLContext, StateCache, ForwardRenderer,
-  Camera, Light, Character, Node,
+  GLContext, StateCache,
+  ForwardRenderer, DeferredRenderer, ShadowMap,
+  Camera, Light, Node,
   VertexBuffer, IndexBuffer,
   Skeleton, Joint,
-  AnimationClip, Pose,
+  AnimationClip,
   AnimationGraph,
   GPUSkinning,
 } from '../src/sdk/OpenHuman.js';
@@ -177,6 +289,8 @@ const canvas  = document.getElementById('gl-canvas');
 const fpsEl   = document.getElementById('fps');
 const infoEl  = document.getElementById('renderer-info');
 const stateEl = document.getElementById('anim-state');
+const pipeEl  = document.getElementById('pipeline-label');
+const pathBadge = document.getElementById('path-badge');
 
 function showError(msg) {
   const overlay = document.getElementById('error-overlay');
@@ -195,32 +309,19 @@ function showError(msg) {
 function buildSkinnedCylinder(gl) {
   const RADIUS  = 0.18;
   const HEIGHT  = 2.0;
-  const SEGS    = 24;    // radial segments
-  const VSTACKS = 12;    // vertical segments
+  const SEGS    = 24;
+  const VSTACKS = 12;
 
-  const positions = [];
-  const normals   = [];
-  const uvs       = [];
-  const joints    = [];
-  const weights   = [];
-  const indices   = [];
+  const positions = [], normals = [], uvs = [];
+  const joints = [], weights = [], indices = [];
 
-  // Generate rings bottom → top
   for (let vi = 0; vi <= VSTACKS; vi++) {
-    const y = (vi / VSTACKS) * HEIGHT;
-    // Map Y to joint weights:
-    //   y in [0,1)   → joint 0 dominant
-    //   y in [0.8,1.4] → blend joints 0 and 1
-    //   y in [1.0,2]   → joint 1 dominant
-    //   y in [1.8,2]   → blend joints 1 and 2
-    const t0 = y;           // 0→2
-    const w0 = Math.max(0, 1.0 - Math.max(0, (t0 - 0.6) / 0.8));
-    const w1Raw = 1.0 - Math.abs(t0 - 1.0) / 1.0;
-    const w1 = Math.max(0, Math.min(1, w1Raw));
-    const w2 = Math.max(0, 1.0 - Math.max(0, (2.0 - t0 - 0.6) / 0.8));
-    // Normalise
-    const wSum = w0 + w1 + w2 + 1e-6;
-    const nw0 = w0 / wSum, nw1 = w1 / wSum, nw2 = w2 / wSum;
+    const y   = (vi / VSTACKS) * HEIGHT;
+    const t0  = y;
+    const w0  = Math.max(0, 1.0 - Math.max(0, (t0 - 0.6) / 0.8));
+    const w1  = Math.max(0, Math.min(1, 1.0 - Math.abs(t0 - 1.0)));
+    const w2  = Math.max(0, 1.0 - Math.max(0, (2.0 - t0 - 0.6) / 0.8));
+    const inv = 1.0 / (w0 + w1 + w2 + 1e-6);
 
     for (let si = 0; si <= SEGS; si++) {
       const theta = (si / SEGS) * 2 * Math.PI;
@@ -228,43 +329,30 @@ function buildSkinnedCylinder(gl) {
       positions.push(nx * RADIUS, y, nz * RADIUS);
       normals.push(nx, 0, nz);
       uvs.push(si / SEGS, vi / VSTACKS);
-      joints.push(0, 1, 2, 0);   // up to 4 influences; indices
-      weights.push(nw0, nw1, nw2, 0.0);
+      joints.push(0, 1, 2, 0);
+      weights.push(w0 * inv, w1 * inv, w2 * inv, 0);
     }
   }
 
-  // Triangles
   for (let vi = 0; vi < VSTACKS; vi++) {
     for (let si = 0; si < SEGS; si++) {
-      const a = vi * (SEGS + 1) + si;
-      const b = a + (SEGS + 1);
-      indices.push(a, b, a + 1);
-      indices.push(b, b + 1, a + 1);
+      const a = vi * (SEGS + 1) + si, b = a + (SEGS + 1);
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
     }
   }
 
-  // Add top and bottom caps
-  // Bottom cap center
-  const botCenter = positions.length / 3;
+  // Bottom cap
+  const botC = positions.length / 3;
   positions.push(0, 0, 0); normals.push(0, -1, 0); uvs.push(0.5, 0.5);
   joints.push(0, 1, 2, 0); weights.push(1, 0, 0, 0);
-  for (let si = 0; si < SEGS; si++) {
-    const a = si;
-    const b = (si + 1) % SEGS;
-    indices.push(botCenter, b, a);
-  }
+  for (let si = 0; si < SEGS; si++) indices.push(botC, (si + 1) % SEGS, si);
 
-  // Top cap center
-  const topCenterY = HEIGHT;
-  const topCenter = positions.length / 3;
-  positions.push(0, topCenterY, 0); normals.push(0, 1, 0); uvs.push(0.5, 0.5);
+  // Top cap
+  const topC = positions.length / 3;
+  const lrb  = VSTACKS * (SEGS + 1);
+  positions.push(0, HEIGHT, 0); normals.push(0, 1, 0); uvs.push(0.5, 0.5);
   joints.push(1, 2, 0, 0); weights.push(0, 1, 0, 0);
-  const lastRingBase = VSTACKS * (SEGS + 1);
-  for (let si = 0; si < SEGS; si++) {
-    const a = lastRingBase + si;
-    const b = lastRingBase + (si + 1) % SEGS;
-    indices.push(topCenter, a, b);
-  }
+  for (let si = 0; si < SEGS; si++) indices.push(topC, lrb + si, lrb + (si + 1) % SEGS);
 
   const posArr = new Float32Array(positions);
   const nrmArr = new Float32Array(normals);
@@ -284,11 +372,11 @@ function buildSkinnedCylinder(gl) {
     return buf;
   };
 
-  const posBuf  = upload(posArr, 0, 3);
-  const nrmBuf  = upload(nrmArr, 1, 3);
-  const uvBuf   = upload(uvArr,  2, 2);
-  const jBuf    = upload(jArr,   3, 4);
-  const wBuf    = upload(wArr,   4, 4);
+  const posBuf = upload(posArr, 0, 3);
+  const nrmBuf = upload(nrmArr, 1, 3);
+  const uvBuf  = upload(uvArr,  2, 2);
+  const jBuf   = upload(jArr,   3, 4);
+  const wBuf   = upload(wArr,   4, 4);
 
   const idxBuf = new IndexBuffer(gl, gl.STATIC_DRAW);
   idxBuf.upload(idxArr);
@@ -315,44 +403,27 @@ function buildSkinnedCylinder(gl) {
 // 2. Build skeleton (3 joints, parent-child chain)
 // ─────────────────────────────────────────────────────────────────
 function buildSkeleton() {
-  // Joint local translations in bind pose
-  const j0 = new Joint('root', 0, -1);   j0.localTranslation.set(0, 0, 0);
-  const j1 = new Joint('mid',  1,  0);   j1.localTranslation.set(0, 1, 0);
-  const j2 = new Joint('tip',  2,  1);   j2.localTranslation.set(0, 1, 0);
-
+  const j0 = new Joint('root', 0, -1); j0.localTranslation.set(0, 0, 0);
+  const j1 = new Joint('mid',  1,  0); j1.localTranslation.set(0, 1, 0);
+  const j2 = new Joint('tip',  2,  1); j2.localTranslation.set(0, 1, 0);
   const skel = new Skeleton([j0, j1, j2]);
-
-  // Compute bind-pose world matrices so we can derive inverseBindMatrices
   skel.updateWorldMatrices();
-
-  // inverseBindMatrix = inverse of worldMatrix in bind pose
-  // Since worldMatrix = identity TRS for each joint in bind pose,
-  // inverseBindMatrix is just the inverse of the bind-pose world transform.
-  // We import Mat4 lazily here via the SDK re-export.
-  for (const j of skel.joints) {
-    // Mat4.invert is not re-exported directly — use inline inversion
-    _mat4Invert(j.worldMatrix, j.inverseBindMatrix);
-  }
-
+  for (const j of skel.joints) _mat4Invert(j.worldMatrix, j.inverseBindMatrix);
   return skel;
 }
 
-// Inline Mat4 invert (same algorithm as Mat4.js to avoid import)
 function _mat4Invert(src, dst) {
   const m = src.e, o = dst.e;
   const m00=m[0],m01=m[1],m02=m[2],m03=m[3];
   const m10=m[4],m11=m[5],m12=m[6],m13=m[7];
   const m20=m[8],m21=m[9],m22=m[10],m23=m[11];
   const m30=m[12],m31=m[13],m32=m[14],m33=m[15];
-  const b00=m00*m11-m01*m10, b01=m00*m12-m02*m10;
-  const b02=m00*m13-m03*m10, b03=m01*m12-m02*m11;
-  const b04=m01*m13-m03*m11, b05=m02*m13-m03*m12;
-  const b06=m20*m31-m21*m30, b07=m20*m32-m22*m30;
-  const b08=m20*m33-m23*m30, b09=m21*m32-m22*m31;
-  const b10=m21*m33-m23*m31, b11=m22*m33-m23*m32;
+  const b00=m00*m11-m01*m10,b01=m00*m12-m02*m10,b02=m00*m13-m03*m10;
+  const b03=m01*m12-m02*m11,b04=m01*m13-m03*m11,b05=m02*m13-m03*m12;
+  const b06=m20*m31-m21*m30,b07=m20*m32-m22*m30,b08=m20*m33-m23*m30;
+  const b09=m21*m32-m22*m31,b10=m21*m33-m23*m31,b11=m22*m33-m23*m32;
   let det=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;
-  if (!det) return;
-  det = 1/det;
+  if (!det) return; det=1/det;
   o[0]=(m11*b11-m12*b10+m13*b09)*det; o[1]=(m02*b10-m01*b11-m03*b09)*det;
   o[2]=(m31*b05-m32*b04+m33*b03)*det; o[3]=(m22*b04-m21*b05-m23*b03)*det;
   o[4]=(m12*b08-m10*b11-m13*b07)*det; o[5]=(m00*b11-m02*b08+m03*b07)*det;
@@ -364,49 +435,33 @@ function _mat4Invert(src, dst) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 3. Build animation clips
-//    Idle: gentle sway of mid joint (Z-axis rotation)
-//    Talk: more energetic nodding (mid + tip joints)
+// 3. Build animation clips (idle sway + talk nod)
 // ─────────────────────────────────────────────────────────────────
 function makeRotationChannel(jointIdx, times, angles, axis) {
-  // axis: 'x' | 'y' | 'z'
-  // angles: array of radians for each keyframe
   const values = new Float32Array(times.length * 4);
   for (let i = 0; i < times.length; i++) {
-    const half = angles[i] * 0.5;
-    const s = Math.sin(half), c = Math.cos(half);
-    const base = i * 4;
-    values[base]     = axis === 'x' ? s : 0;
-    values[base + 1] = axis === 'y' ? s : 0;
-    values[base + 2] = axis === 'z' ? s : 0;
-    values[base + 3] = c;
+    const h = angles[i] * 0.5, s = Math.sin(h), c = Math.cos(h);
+    const b = i * 4;
+    values[b] = axis === 'x' ? s : 0;
+    values[b+1] = axis === 'y' ? s : 0;
+    values[b+2] = axis === 'z' ? s : 0;
+    values[b+3] = c;
   }
-  return {
-    targetJointIndex: jointIdx,
-    property:         'rotation',
-    interpolation:    'LINEAR',
-    times:            new Float32Array(times),
-    values,
-  };
+  return { targetJointIndex: jointIdx, property: 'rotation', interpolation: 'LINEAR',
+           times: new Float32Array(times), values };
 }
 
 function buildIdleClip() {
-  // Mid joint sways ±15° around Z, period = 2 s
-  const times  = [0, 0.5, 1.0, 1.5, 2.0];
-  const angles = [0, 0.26, 0, -0.26, 0];   // radians ≈ ±15°
   return new AnimationClip('idle', 2.0, [
-    makeRotationChannel(1, times, angles, 'z'),
+    makeRotationChannel(1, [0,0.5,1.0,1.5,2.0], [0,0.26,0,-0.26,0], 'z'),
   ]);
 }
 
 function buildTalkClip() {
-  // Mid joint nods ±25° around Z, tip joint ±15° opposite
-  const t   = [0, 0.25, 0.5, 0.75, 1.0];
-  const mid = [0,  0.44, 0,  -0.44, 0];  // ±25°
-  const tip = [0, -0.26, 0,   0.26, 0];  // ∓15°
+  const t = [0,0.25,0.5,0.75,1.0];
   return new AnimationClip('talk', 1.0, [
-    makeRotationChannel(1, t, mid, 'z'),
-    makeRotationChannel(2, t, tip, 'z'),
+    makeRotationChannel(1, t, [0,0.44,0,-0.44,0], 'z'),
+    makeRotationChannel(2, t, [0,-0.26,0,0.26,0], 'z'),
   ]);
 }
 
@@ -414,10 +469,23 @@ function buildTalkClip() {
 // 4. Main entry point
 // ─────────────────────────────────────────────────────────────────
 try {
-  const glCtx   = new GLContext(canvas);
-  const gl      = glCtx.gl;
-  const cache   = new StateCache(gl);
-  const renderer = new ForwardRenderer(glCtx, cache);
+  const glCtx = new GLContext(canvas);
+  const gl    = glCtx.gl;
+  const cache = new StateCache(gl);
+
+  // ── Create both renderer instances (deferred is default)
+  const deferredRenderer = new DeferredRenderer(glCtx, cache);
+  const forwardRenderer  = new ForwardRenderer(glCtx, cache);
+  const shadowMap        = new ShadowMap(glCtx, cache);
+
+  // Active renderer pointer — starts on deferred path
+  let renderer     = deferredRenderer;
+  let useDeferred  = true;
+
+  // Per-frame toggle flags
+  let shadowEnabled = true;
+  let iblEnabled    = false;
+  let acesEnabled   = true;
 
   const camera = new Camera({ fov: 50, aspect: canvas.clientWidth / (canvas.clientHeight || 1), near: 0.1, far: 100 });
   camera.setOrbit(0.2, Math.PI / 3.5, 3.5);
@@ -428,50 +496,112 @@ try {
   light.color.set(1, 0.95, 0.9);
   light.intensity = 1.2;
 
-  // Build scene
-  const skeleton  = buildSkeleton();
-  const meshData  = buildSkinnedCylinder(gl);
-  const gpuSkin   = new GPUSkinning(gl, skeleton.joints.length);
+  // ── Scene
+  const skeleton = buildSkeleton();
+  const meshData = buildSkinnedCylinder(gl);
+  const gpuSkin  = new GPUSkinning(gl, skeleton.joints.length);
 
-  // Offset the cylinder so the root is near the scene centre
-  const charNode  = new Node('Character');
-  const meshNode  = new Node('mesh');
-  meshNode.mesh   = meshData;
+  const charNode = new Node('Character');
+  const meshNode = new Node('mesh');
+  meshNode.mesh  = meshData;
   charNode.addChild(meshNode);
-  // Centre the character around Y=1 (middle of the 2-unit cylinder)
   charNode.position.set(0, -1, 0);
 
-  // Animation graph
-  const idleClip = buildIdleClip();
-  const talkClip = buildTalkClip();
-
+  // ── Animation graph
   const graph = new AnimationGraph(skeleton);
-  graph.addState('idle', idleClip);
-  graph.addState('talk', talkClip);
+  graph.addState('idle', buildIdleClip());
+  graph.addState('talk', buildTalkClip());
   graph.addTransition('idle', 'talk', 'isTalking', 0.35, true);
   graph.addTransition('talk', 'idle', 'isTalking', 0.35, false);
   graph.play('idle');
 
-  infoEl.textContent = 'WebGL 2.0 · GPU DQ Skinning · Forward Renderer';
+  // ── Update path badge + HUD labels
+  function updatePathUI() {
+    if (useDeferred) {
+      const parts = ['Deferred PBR · G-buffer'];
+      if (shadowEnabled) parts.push('PCF Shadows');
+      if (iblEnabled)    parts.push('IBL');
+      if (acesEnabled)   parts.push('ACES');
+      pathBadge.textContent = parts.join(' · ');
+      pathBadge.style.background = '#7a3c1c';
+      pipeEl.textContent = 'Deferred';
+      infoEl.textContent = 'WebGL 2.0 · Deferred PBR · G-buffer MRT';
+    } else {
+      pathBadge.textContent = 'Forward · Phong';
+      pathBadge.style.background = '#2c4a8c';
+      pipeEl.textContent = 'Forward';
+      infoEl.textContent = 'WebGL 2.0 · Forward Renderer · Phong';
+    }
+  }
+  updatePathUI();
   stateEl.textContent = 'idle';
 
-  // ── Playback controls
-  let currentAnim = 'idle';
+  // ── Render controls wiring
+
+  // Exposure
+  const expSlider = document.getElementById('exposure-slider');
+  const expVal    = document.getElementById('exposure-val');
+  expSlider.addEventListener('input', () => {
+    const v = parseFloat(expSlider.value);
+    expVal.textContent = v.toFixed(2);
+    deferredRenderer.setExposure(v);
+  });
+
+  // Shadow toggle
+  const btnShadow = document.getElementById('btn-shadow');
+  btnShadow.addEventListener('click', () => {
+    shadowEnabled = !shadowEnabled;
+    btnShadow.textContent = shadowEnabled ? 'ON' : 'OFF';
+    btnShadow.classList.toggle('off', !shadowEnabled);
+    updatePathUI();
+  });
+
+  // IBL toggle
+  const btnIBL = document.getElementById('btn-ibl');
+  btnIBL.addEventListener('click', () => {
+    iblEnabled = !iblEnabled;
+    deferredRenderer.setIBLEnabled(iblEnabled);
+    btnIBL.textContent = iblEnabled ? 'ON' : 'OFF';
+    btnIBL.classList.toggle('off', !iblEnabled);
+    updatePathUI();
+  });
+
+  // ACES toggle
+  const btnACES = document.getElementById('btn-aces');
+  btnACES.addEventListener('click', () => {
+    acesEnabled = !acesEnabled;
+    deferredRenderer.setACES(acesEnabled);
+    btnACES.textContent = acesEnabled ? 'ON' : 'OFF';
+    btnACES.classList.toggle('off', !acesEnabled);
+    updatePathUI();
+  });
+
+  // Pipeline toggle: Deferred ↔ Forward
+  const btnPipeline = document.getElementById('btn-pipeline');
+  btnPipeline.addEventListener('click', () => {
+    useDeferred = !useDeferred;
+    renderer    = useDeferred ? deferredRenderer : forwardRenderer;
+    btnPipeline.textContent = useDeferred ? 'Deferred' : 'Forward';
+    btnPipeline.classList.toggle('off', !useDeferred);
+    // Sync canvas size to newly active renderer
+    renderer.resize(canvas.width, canvas.height);
+    updatePathUI();
+  });
+
+  // ── Animation controls
   document.getElementById('btn-idle').addEventListener('click', () => {
     graph.setBool('isTalking', false);
     stateEl.textContent = 'idle (crossfading…)';
     setTimeout(() => { if (stateEl.textContent.startsWith('idle')) stateEl.textContent = 'idle'; }, 380);
-    currentAnim = 'idle';
   });
   document.getElementById('btn-talk').addEventListener('click', () => {
     graph.setBool('isTalking', true);
     stateEl.textContent = 'talk (crossfading…)';
     setTimeout(() => { if (stateEl.textContent.startsWith('talk')) stateEl.textContent = 'talk'; }, 380);
-    currentAnim = 'talk';
   });
 
   // ── Render loop
-  let lastTs    = performance.now();
+  let lastTs     = performance.now();
   let frameCount = 0;
   let lastFps    = performance.now();
 
@@ -490,7 +620,7 @@ try {
   function frame(ts) {
     requestAnimationFrame(frame);
 
-    // Resize
+    // ── Resize
     const dpr = window.devicePixelRatio ?? 1;
     const dw  = Math.floor(canvas.clientWidth  * dpr);
     const dh  = Math.floor(canvas.clientHeight * dpr);
@@ -498,31 +628,38 @@ try {
       canvas.width  = dw; canvas.height = dh;
       camera.aspect = dw / (dh || 1);
       camera.updateProjection();
-      renderer.resize(dw, dh);
+      deferredRenderer.resize(dw, dh);
+      forwardRenderer.resize(dw, dh);
     }
 
     const dt = Math.min((ts - lastTs) / 1000, 0.1);
     lastTs = ts;
 
-    // Auto-orbit
+    // ── Auto-orbit
     if (autoOrbit) {
       orbitTheta += dt * 0.4;
       camera.setOrbit(orbitTheta, Math.PI / 3.5, 3.5);
     }
 
-    // Update animation graph → skeleton poses
+    // ── Animation update
     graph.update(dt);
-
-    // Upload to GPU
     gpuSkin.update(skeleton);
-
-    // Update scene graph world matrices
     charNode.updateWorldMatrix(null);
 
-    // Draw — pass gpuSkin to renderer
-    renderer.render(charNode.children, camera, [light], gpuSkin);
+    // ── Shadow pass (deferred path only, when shadows enabled)
+    const activeShadow = (useDeferred && shadowEnabled) ? shadowMap : null;
+    if (activeShadow) {
+      shadowMap.render(charNode.children, light, gpuSkin);
+    }
 
-    // FPS
+    // ── Main render
+    if (useDeferred) {
+      deferredRenderer.render(charNode.children, camera, [light], gpuSkin, activeShadow);
+    } else {
+      forwardRenderer.render(charNode.children, camera, [light], gpuSkin);
+    }
+
+    // ── FPS counter
     frameCount++;
     if (ts - lastFps >= 500) {
       fpsEl.textContent = (frameCount / ((ts - lastFps) / 1000)).toFixed(0);

@@ -28,6 +28,28 @@ void main() {
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Simple gamma-only pass (linear exposure + γ2.2, no filmic curve)
+// Used as a fallback when ACES is disabled.
+// ─────────────────────────────────────────────────────────────────────────────
+const GAMMA_FRAG = /* glsl */`#version 300 es
+precision mediump float;
+
+uniform sampler2D u_HDRBuffer;
+uniform float     u_Exposure;
+
+out vec4 fragColor;
+
+void main() {
+  ivec2 coord = ivec2(gl_FragCoord.xy);
+  vec3  hdr   = texelFetch(u_HDRBuffer, coord, 0).rgb;
+  hdr *= u_Exposure;
+  // Simple sRGB γ≈2.2 correction without filmic curve
+  hdr = pow(clamp(hdr, 0.0, 1.0), vec3(1.0 / 2.2));
+  fragColor = vec4(hdr, 1.0);
+}
+`;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ACES filmic tone-mapping + gamma correction fragment shader
 // ─────────────────────────────────────────────────────────────────────────────
 const TONEMAP_FRAG = /* glsl */`#version 300 es
@@ -89,18 +111,41 @@ export class PostProcessStack {
 
     // Built-in ACES tone-map shader
     this._tonemapShader = new Shader(this.gl, FULLSCREEN_VERT, TONEMAP_FRAG);
+    // Built-in gamma-only fallback shader (used when ACES is disabled)
+    this._gammaShader   = new Shader(this.gl, FULLSCREEN_VERT, GAMMA_FRAG);
     this._exposure = 1.0;
 
-    // Register the ACES pass as the default (and currently only) pass
+    // Register the ACES pass as the default (enabled) pass
     this.passes.push({
       name:    'tonemap_aces',
       shader:  this._tonemapShader,
       uniforms: {},
       enabled: true,
     });
+
+    // Gamma-only fallback pass (disabled by default; activated via setACESEnabled(false))
+    this.passes.push({
+      name:    'gamma_only',
+      shader:  this._gammaShader,
+      uniforms: {},
+      enabled: false,
+    });
   }
 
   // ─────────────────────────────────── public API
+
+  /**
+   * Toggle ACES filmic tone-mapping on/off.
+   * When off, a simple linear-to-gamma pass is used instead so the scene
+   * remains visible (just without the filmic response curve).
+   * @param {boolean} enabled
+   */
+  setACESEnabled(enabled) {
+    const aces  = this.passes.find(p => p.name === 'tonemap_aces');
+    const gamma = this.passes.find(p => p.name === 'gamma_only');
+    if (aces)  aces.enabled  =  !!enabled;
+    if (gamma) gamma.enabled = !enabled;
+  }
 
   /**
    * Set exposure value applied before tone-mapping.
@@ -160,8 +205,8 @@ export class PostProcessStack {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, currentInput);
 
-      // ACES tone-map specific uniforms
-      if (pass.name === 'tonemap_aces') {
+      // ACES tone-map or gamma-only built-in uniforms
+      if (pass.name === 'tonemap_aces' || pass.name === 'gamma_only') {
         pass.shader.setInt('u_HDRBuffer', 0);
         pass.shader.setFloat('u_Exposure', this._exposure);
       }
@@ -201,7 +246,9 @@ export class PostProcessStack {
     for (const rt of this._pingPong) rt?.destroy();
     this._pingPong = [null, null];
     this._tonemapShader?.destroy();
+    this._gammaShader?.destroy();
     this._tonemapShader = null;
+    this._gammaShader   = null;
     this.passes = [];
   }
 

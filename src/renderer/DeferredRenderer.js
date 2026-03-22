@@ -531,6 +531,24 @@ export class DeferredRenderer {
   }
 
   /**
+   * Toggle ACES filmic tone-mapping.  When disabled a simple gamma-only pass
+   * is used so the scene remains visible without the filmic response curve.
+   * @param {boolean} enabled
+   */
+  setACES(enabled) {
+    this._postStack.setACESEnabled(!!enabled);
+  }
+
+  /**
+   * Enable or disable IBL.  When disabled the renderer falls back to
+   * hemisphere ambient + BRDF-LUT specular.
+   * @param {boolean} enabled
+   */
+  setIBLEnabled(enabled) {
+    this._iblEnabled = !!enabled;
+  }
+
+  /**
    * Supply pre-baked IBL textures (equirectangular format).
    * Pass null to revert to the hemisphere ambient fallback.
    * @param {WebGLTexture|null} irradianceTex — diffuse irradiance map

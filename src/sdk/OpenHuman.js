@@ -177,6 +177,16 @@ class OpenHumanInstance {
           self._renderer.setEnvironment(irradianceTex ?? null, envTex ?? null);
         }
       },
+      setACES(enabled) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setACES(enabled);
+        }
+      },
+      setIBL(enabled) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setIBLEnabled(enabled);
+        }
+      },
       setSSSStrength(v)      { /* TODO: subsurface scattering strength uniform */ },
     };
   }
@@ -278,7 +288,12 @@ export class OpenHuman {
   static async load(assetUrl, canvas) {
     const glContext  = new GLContext(canvas);
     const stateCache = new StateCache(glContext.gl);
-    const renderer   = new ForwardRenderer(glContext, stateCache);
+
+    const w = canvas.clientWidth  || canvas.width  || 1;
+    const h = canvas.clientHeight || canvas.height || 1;
+
+    const renderer  = new DeferredRenderer(glContext, stateCache, { width: w, height: h });
+    const shadowMap = new ShadowMap(glContext, stateCache);
 
     const camera = new Camera({
       fov:    60,
@@ -306,7 +321,7 @@ export class OpenHuman {
     }
 
     const instance = new OpenHumanInstance(
-      canvas, character, glContext, stateCache, renderer, camera, [light]
+      canvas, character, glContext, stateCache, renderer, camera, [light], shadowMap
     );
     instance._startRenderLoop();
     return instance;
@@ -314,8 +329,9 @@ export class OpenHuman {
 }
 
 // Re-export core modules for advanced use cases
-export { GLContext, StateCache, ForwardRenderer, GLTFLoader, Camera, Light, Character, Node };
+export { GLContext, StateCache, ForwardRenderer, DeferredRenderer, ShadowMap, GLTFLoader, Camera, Light, Character, Node };
 export { VertexBuffer, IndexBuffer };
+export { PostProcessStack } from '../renderer/PostProcessStack.js';
 export { Skeleton, Joint }    from '../animation/Skeleton.js';
 export { AnimationClip, Pose } from '../animation/AnimationClip.js';
 export { AnimationGraph }      from '../animation/AnimationGraph.js';
