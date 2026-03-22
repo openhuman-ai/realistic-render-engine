@@ -166,29 +166,31 @@ try {
     }
   });
 
-  // Demonstrate SDK surface — auto-rotate the sphere slowly via the SDK
-  // by setting camera theta each frame (orbit the camera, not the mesh)
+  // Auto-rotate the sphere by incrementing the orbit angle via the public API
   let autoRotate = true;
+  let orbitTheta = 0;
+  let orbitPhi   = Math.PI / 4;
+  let orbitRadius = 3;
+
   canvas.addEventListener('mousedown', () => { autoRotate = false; });
   canvas.addEventListener('touchstart', () => { autoRotate = false; });
 
-  // After 200 ms of inactivity, resume auto-rotate
+  // Resume auto-rotate after 2 s of inactivity
   let idleTimer = null;
   const resetIdle = () => {
     autoRotate = false;
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => { autoRotate = true; }, 2000);
   };
-  canvas.addEventListener('mouseup',   resetIdle);
-  canvas.addEventListener('touchend',  resetIdle);
+  canvas.addEventListener('mouseup',  resetIdle);
+  canvas.addEventListener('touchend', resetIdle);
 
-  // Gently spin camera
-  const camera = instance._camera;
+  // Gently spin camera using the public camera.setOrbit() API
   const rotLoop = () => {
     requestAnimationFrame(rotLoop);
     if (autoRotate) {
-      camera._theta += 0.003;
-      camera._updateFromSpherical();
+      orbitTheta += 0.003;
+      instance.camera.setOrbit(orbitTheta, orbitPhi, orbitRadius);
     }
   };
   requestAnimationFrame(rotLoop);

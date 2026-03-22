@@ -74,6 +74,19 @@ export class Camera extends Node {
     this.updateProjection();
   }
 
+  /**
+   * Set orbit parameters directly (e.g. for initial positioning).
+   * @param {number} theta   — azimuth in radians
+   * @param {number} phi     — polar angle in radians (0=top, π=bottom)
+   * @param {number} radius  — distance from target
+   */
+  setOrbit(theta, phi, radius) {
+    this._theta  = theta;
+    this._phi    = Math.max(0.05, Math.min(Math.PI - 0.05, phi));
+    this._radius = Math.max(0.1, radius);
+    this._updateFromSpherical();
+  }
+
   // --------------------------------------------------- orbit controls
   /**
    * Attach mouse / touch orbit controls to a canvas.

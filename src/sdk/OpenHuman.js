@@ -12,6 +12,10 @@ import { Camera }          from '../scene/Camera.js';
 import { Light }           from '../scene/Light.js';
 import { Character }       from '../scene/Character.js';
 import { Node }            from '../scene/Node.js';
+import { Vec3 }            from '../math/Vec3.js';
+
+// Module-level scratch Vec3 for SDK lookAt calls — avoids per-call allocation.
+const _lookAtScratch = new Vec3();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procedural sphere generator
@@ -148,9 +152,13 @@ class OpenHumanInstance {
 
     this.camera = {
       setPosition(x, y, z) { camera.setPosition(x, y, z); },
-      lookAt(x, y, z)      { const t = { e: new Float32Array([x, y, z]) }; camera.lookAt(t); },
+      lookAt(x, y, z) {
+        _lookAtScratch.set(x, y, z);
+        camera.lookAt(_lookAtScratch);
+      },
       setFOV(deg)          { camera.setFOV(deg); },
       enableOrbit(enable)  { enable ? camera.enableOrbit(canvas) : camera.disableOrbit(); },
+      setOrbit(theta, phi, radius) { camera.setOrbit(theta, phi, radius); },
     };
 
     this.renderer = {
@@ -235,10 +243,7 @@ export class OpenHuman {
       near:   0.1,
       far:    1000,
     });
-    camera._radius = 3;
-    camera._phi    = Math.PI / 4;
-    camera._theta  = 0;
-    camera._updateFromSpherical();
+    camera.setOrbit(0, Math.PI / 4, 3);
     camera.enableOrbit(canvas);
 
     const light = new Light('directional');

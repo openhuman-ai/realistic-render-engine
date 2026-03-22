@@ -21,7 +21,7 @@ in vec2 a_TexCoord;
 uniform mat4 u_ModelMatrix;
 uniform mat4 u_ViewMatrix;
 uniform mat4 u_ProjectionMatrix;
-uniform mat4 u_NormalMatrix;
+uniform mat3 u_NormalMatrix;
 
 out vec3 v_Normal;
 out vec3 v_WorldPos;
@@ -30,7 +30,7 @@ out vec2 v_TexCoord;
 void main() {
   vec4 worldPos = u_ModelMatrix * vec4(a_Position, 1.0);
   v_WorldPos = worldPos.xyz;
-  v_Normal = normalize((u_NormalMatrix * vec4(a_Normal, 0.0)).xyz);
+  v_Normal = normalize(u_NormalMatrix * a_Normal);
   v_TexCoord = a_TexCoord;
   gl_Position = u_ProjectionMatrix * u_ViewMatrix * worldPos;
 }
@@ -83,9 +83,8 @@ export class ForwardRenderer {
     this.shader = new Shader(this.gl, VERT_SRC, FRAG_SRC);
 
     // Pre-allocated matrices to avoid per-frame heap allocation
-    this._mvp         = new Mat4();
-    this._normalMat   = new Mat3();
-    this._normalMat4  = new Mat4(); // padded mat3 as mat4 for the uniform
+    this._mvp       = new Mat4();
+    this._normalMat = new Mat3();
   }
 
   /**
@@ -151,10 +150,9 @@ export class ForwardRenderer {
     node.updateWorldMatrix(node.parent ? node.parent.worldMatrix : null);
     this.shader.setMat4('u_ModelMatrix', node.worldMatrix.e);
 
-    // Normal matrix (inverse transpose of model matrix upper-left 3x3)
-    Mat4.invert(node.worldMatrix, this._mvp);
-    Mat4.transpose(this._mvp, this._mvp);
-    this.shader.setMat4('u_NormalMatrix', this._mvp.e);
+    // Normal matrix: inverse-transpose of upper-left 3×3 of model matrix
+    Mat3.normalMatrix(node.worldMatrix, this._normalMat);
+    this.shader.setMat3('u_NormalMatrix', this._normalMat.e);
 
     // Material uniforms
     const mat = mesh.material || {};
