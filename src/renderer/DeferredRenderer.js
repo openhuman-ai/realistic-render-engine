@@ -28,6 +28,7 @@
 import { Shader }          from '../core/Shader.js';
 import { RenderTarget }    from '../core/RenderTarget.js';
 import { PostProcessStack } from './PostProcessStack.js';
+import { SSSPass }         from './SSSPass.js';
 import { Mat4 }            from '../math/Mat4.js';
 import { Mat3 }            from '../math/Mat3.js';
 
@@ -458,6 +459,16 @@ export class DeferredRenderer {
 
     // ── HDR lighting accumulation target
     this._hdrTarget = new RenderTarget(gl, {
+      width: w, height: h,
+      colorAttachments: ['RGBA16F'],
+      depthAttachment: false,
+    });
+
+    // ── SSS post-process (skin subsurface scattering)
+    //    Rendered between lighting pass and tonemap.
+    this._sssPass   = new SSSPass(glContext, stateCache, { width: w, height: h });
+    // Secondary HDR target written by SSS pass; tonemap reads from it when SSS is on.
+    this._sssTarget = new RenderTarget(gl, {
       width: w, height: h,
       colorAttachments: ['RGBA16F'],
       depthAttachment: false,
