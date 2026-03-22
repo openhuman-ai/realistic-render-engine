@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHuman Engine — WebGL 2.0</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0e10;
+      color: #e8e8e8;
+      font-family: system-ui, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+      border-bottom: 1px solid #333;
+    }
+
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    header span.badge {
+      font-size: 0.7rem;
+      background: #1e6f3f;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    #canvas-wrapper {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    canvas:active { cursor: grabbing; }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      color: #aaa;
+      pointer-events: none;
+      line-height: 1.8;
+    }
+
+    #fps { color: #6ef08a; font-weight: 600; }
+
+    #controls-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.45);
+      border-radius: 6px;
+      padding: 5px 14px;
+      font-size: 0.7rem;
+      color: #888;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #error-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      color: #f88;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      padding: 24px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>OpenHuman Engine</h1>
+  <span class="badge">WebGL 2.0</span>
+  <span class="badge" style="background:#2c4a8c;">Zero deps</span>
+</header>
+
+<div id="canvas-wrapper">
+  <canvas id="gl-canvas"></canvas>
+
+  <div id="hud">
+    <div>FPS: <span id="fps">—</span></div>
+    <div id="renderer-info">Initialising…</div>
+  </div>
+
+  <div id="controls-hint">
+    🖱 Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Touch supported
+  </div>
+
+  <div id="error-overlay">
+    <div id="error-msg"></div>
+  </div>
+</div>
+
+<!--
+  Demo entry point — uses ES modules, no bundler required.
+
+  The demo loads a procedural sphere via the '__demo__' special URL so it
+  works with zero external assets.  Replace '__demo__' with the path to a
+  .glb or .gltf file to load a real model, e.g.:
+    OpenHuman.load('/assets/character.glb', canvas)
+-->
+<script type="module">
+import { OpenHuman } from '../src/sdk/OpenHuman.js';
+
+const canvas = document.getElementById('gl-canvas');
+const fpsEl  = document.getElementById('fps');
+const infoEl = document.getElementById('renderer-info');
+
+// FPS counter
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+function showError(msg) {
+  const overlay = document.getElementById('error-overlay');
+  document.getElementById('error-msg').textContent = msg;
+  overlay.style.display = 'flex';
+  console.error('[demo]', msg);
+}
+
+try {
+  // '__demo__' → generates a built-in procedural sphere; no asset file needed.
+  const instance = await OpenHuman.load('__demo__', canvas);
+
+  infoEl.textContent = 'WebGL 2.0 · Forward Renderer';
+
+  // Show FPS
+  instance.on('frame', (ts) => {
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 500) {
+      const fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(0);
+      fpsEl.textContent = fps;
+      frameCount  = 0;
+      lastFpsTime = now;
+    }
+  });
+
+  // Auto-rotate the sphere by incrementing the orbit angle via the public API
+  let autoRotate = true;
+  let orbitTheta = 0;
+  let orbitPhi   = Math.PI / 4;
+  let orbitRadius = 3;
+
+  canvas.addEventListener('mousedown', () => { autoRotate = false; });
+  canvas.addEventListener('touchstart', () => { autoRotate = false; });
+
+  // Resume auto-rotate after 2 s of inactivity
+  let idleTimer = null;
+  const resetIdle = () => {
+    autoRotate = false;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { autoRotate = true; }, 2000);
+  };
+  canvas.addEventListener('mouseup',  resetIdle);
+  canvas.addEventListener('touchend', resetIdle);
+
+  // Gently spin camera using the public camera.setOrbit() API
+  const rotLoop = () => {
+    requestAnimationFrame(rotLoop);
+    if (autoRotate) {
+      orbitTheta += 0.003;
+      instance.camera.setOrbit(orbitTheta, orbitPhi, orbitRadius);
+    }
+  };
+  requestAnimationFrame(rotLoop);
+
+} catch (err) {
+  showError(err.message ?? String(err));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "openhuman-realistic-render-engine",
+  "version": "0.1.0",
+  "description": "Pure WebGL 2.0 digital human render engine — zero runtime dependencies",
+  "type": "module",
+  "main": "src/sdk/OpenHuman.js",
+  "scripts": {
+    "dev": "npx esbuild demo/index.html --bundle --servedir=. --outdir=dist",
+    "build": "npx esbuild src/sdk/OpenHuman.js --bundle --format=esm --outfile=dist/openhuman.js --minify",
+    "serve": "npx http-server . -p 8080 -c-1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "http-server": "^14.1.1"
+  }
+}
