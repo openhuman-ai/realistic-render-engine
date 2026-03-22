@@ -242,6 +242,58 @@
       <label>Pipeline</label>
       <button class="toggle-btn" id="btn-pipeline" style="min-width:68px;">Deferred</button>
     </div>
+
+    <div class="section-title" style="margin-top:6px;">Advanced Shading</div>
+
+    <div class="ctrl-row">
+      <label>Skin SSS</label>
+      <button class="toggle-btn off" id="btn-sss">OFF</button>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Strength</label>
+      <input type="range" id="sss-strength" min="0.0" max="1.0" step="0.02" value="0.45" />
+      <span id="sss-strength-val">0.45</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Width</label>
+      <input type="range" id="sss-width" min="0.5" max="5.0" step="0.1" value="2.0" />
+      <span id="sss-width-val">2.0</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color R</label>
+      <input type="range" id="sss-r" min="0.0" max="2.0" step="0.05" value="1.0" />
+      <span id="sss-r-val">1.00</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color G</label>
+      <input type="range" id="sss-g" min="0.0" max="2.0" step="0.05" value="0.45" />
+      <span id="sss-g-val">0.45</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color B</label>
+      <input type="range" id="sss-b" min="0.0" max="2.0" step="0.05" value="0.18" />
+      <span id="sss-b-val">0.18</span>
+    </div>
+
+    <div class="ctrl-row">
+      <label>Eye Shader</label>
+      <button class="toggle-btn" id="btn-eye">ON</button>
+    </div>
+    <div class="ctrl-row">
+      <label>Iris Size</label>
+      <input type="range" id="eye-iris" min="0.12" max="0.45" step="0.01" value="0.30" />
+      <span id="eye-iris-val">0.30</span>
+    </div>
+
+    <div class="ctrl-row">
+      <label>Hair Shader</label>
+      <button class="toggle-btn" id="btn-hair">ON</button>
+    </div>
+    <div class="ctrl-row">
+      <label>Hair Aniso</label>
+      <input type="range" id="hair-spec" min="16" max="128" step="1" value="80" />
+      <span id="hair-spec-val">80</span>
+    </div>
   </div>
 
   <!-- Animation controls (bottom-centre) -->
@@ -277,6 +329,7 @@
 import {
   GLContext, StateCache,
   ForwardRenderer, DeferredRenderer, ShadowMap,
+  EyeRenderer, HairRenderer, buildHairCards,
   Camera, Light, Node,
   VertexBuffer, IndexBuffer,
   Skeleton, Joint,
@@ -477,6 +530,8 @@ try {
   const deferredRenderer = new DeferredRenderer(glCtx, cache);
   const forwardRenderer  = new ForwardRenderer(glCtx, cache);
   const shadowMap        = new ShadowMap(glCtx, cache);
+  const eyeRenderer      = new EyeRenderer(glCtx, cache);
+  const hairRenderer     = new HairRenderer(glCtx, cache);
 
   // Active renderer pointer — starts on deferred path
   let renderer     = deferredRenderer;
@@ -486,6 +541,9 @@ try {
   let shadowEnabled = true;
   let iblEnabled    = false;
   let acesEnabled   = true;
+  let sssEnabled    = false;
+  let eyeEnabled    = true;
+  let hairEnabled   = true;
 
   const camera = new Camera({ fov: 50, aspect: canvas.clientWidth / (canvas.clientHeight || 1), near: 0.1, far: 100 });
   camera.setOrbit(0.2, Math.PI / 3.5, 3.5);
@@ -507,6 +565,28 @@ try {
   charNode.addChild(meshNode);
   charNode.position.set(0, -1, 0);
 
+  // Additional demo meshes for PR#4
+  const skinNode = new Node('skinSphere');
+  skinNode.mesh  = { ...meshData };
+  skinNode.position.set(-0.75, 0.05, -0.15);
+  skinNode.scale.set(0.62, 0.62, 0.62);
+  skinNode.mesh.material = {
+    baseColorFactor: [0.92, 0.62, 0.50, 1.0],
+    roughnessFactor: 0.58,
+    metallicFactor:  0.02,
+  };
+
+  const eyeNode = new Node('eye');
+  eyeNode.mesh  = { vao: true }; // marker mesh for eye renderer pass
+  eyeNode.position.set(0.22, 0.15, 0.16);
+  eyeNode.scale.set(0.24, 0.24, 0.24);
+
+  const hairNode = new Node('hairCards');
+  hairNode.mesh  = buildHairCards(gl, { cardCount: 48, cardLength: 0.95, cardWidth: 0.06 });
+  hairNode.position.set(0.0, 0.48, 0.0);
+
+  const sceneNodes = [meshNode, skinNode];
+
   // ── Animation graph
   const graph = new AnimationGraph(skeleton);
   graph.addState('idle', buildIdleClip());
@@ -521,6 +601,9 @@ try {
       const parts = ['Deferred PBR · G-buffer'];
       if (shadowEnabled) parts.push('PCF Shadows');
       if (iblEnabled)    parts.push('IBL');
+      if (sssEnabled)    parts.push('SSS');
+      if (eyeEnabled)    parts.push('Eye');
+      if (hairEnabled)   parts.push('Hair');
       if (acesEnabled)   parts.push('ACES');
       pathBadge.textContent = parts.join(' · ');
       pathBadge.style.background = '#7a3c1c';
@@ -588,6 +671,81 @@ try {
     updatePathUI();
   });
 
+  // SSS controls
+  const btnSSS = document.getElementById('btn-sss');
+  btnSSS.addEventListener('click', () => {
+    sssEnabled = !sssEnabled;
+    deferredRenderer.setSSSEnabled(sssEnabled);
+    btnSSS.textContent = sssEnabled ? 'ON' : 'OFF';
+    btnSSS.classList.toggle('off', !sssEnabled);
+    updatePathUI();
+  });
+  const sssStrength = document.getElementById('sss-strength');
+  const sssStrengthVal = document.getElementById('sss-strength-val');
+  sssStrength.addEventListener('input', () => {
+    const v = parseFloat(sssStrength.value);
+    sssStrengthVal.textContent = v.toFixed(2);
+    deferredRenderer.setSSSStrength(v);
+  });
+  const sssWidth = document.getElementById('sss-width');
+  const sssWidthVal = document.getElementById('sss-width-val');
+  sssWidth.addEventListener('input', () => {
+    const v = parseFloat(sssWidth.value);
+    sssWidthVal.textContent = v.toFixed(1);
+    deferredRenderer.setSSSWidth(v);
+  });
+  const sssR = document.getElementById('sss-r');
+  const sssG = document.getElementById('sss-g');
+  const sssB = document.getElementById('sss-b');
+  const sssRVal = document.getElementById('sss-r-val');
+  const sssGVal = document.getElementById('sss-g-val');
+  const sssBVal = document.getElementById('sss-b-val');
+  function applySSSColorFromUI() {
+    const r = parseFloat(sssR.value), g = parseFloat(sssG.value), b = parseFloat(sssB.value);
+    sssRVal.textContent = r.toFixed(2);
+    sssGVal.textContent = g.toFixed(2);
+    sssBVal.textContent = b.toFixed(2);
+    deferredRenderer.setSSSColor(r, g, b);
+  }
+  sssR.addEventListener('input', applySSSColorFromUI);
+  sssG.addEventListener('input', applySSSColorFromUI);
+  sssB.addEventListener('input', applySSSColorFromUI);
+  applySSSColorFromUI();
+
+  // Eye controls
+  const btnEye = document.getElementById('btn-eye');
+  btnEye.addEventListener('click', () => {
+    eyeEnabled = !eyeEnabled;
+    btnEye.textContent = eyeEnabled ? 'ON' : 'OFF';
+    btnEye.classList.toggle('off', !eyeEnabled);
+    updatePathUI();
+  });
+  const eyeIris = document.getElementById('eye-iris');
+  const eyeIrisVal = document.getElementById('eye-iris-val');
+  eyeIris.addEventListener('input', () => {
+    const v = parseFloat(eyeIris.value);
+    eyeIrisVal.textContent = v.toFixed(2);
+    eyeRenderer.setIrisDilate(v);
+  });
+
+  // Hair controls
+  const btnHair = document.getElementById('btn-hair');
+  btnHair.addEventListener('click', () => {
+    hairEnabled = !hairEnabled;
+    btnHair.textContent = hairEnabled ? 'ON' : 'OFF';
+    btnHair.classList.toggle('off', !hairEnabled);
+    updatePathUI();
+  });
+  const hairSpec = document.getElementById('hair-spec');
+  const hairSpecVal = document.getElementById('hair-spec-val');
+  hairSpec.addEventListener('input', () => {
+    const v = parseFloat(hairSpec.value);
+    hairSpecVal.textContent = v.toFixed(0);
+    hairRenderer.setSpecPower1(v);
+    // Secondary lobe is wider/softer than primary; clamp to keep it visible at low values.
+    hairRenderer.setSpecPower2(Math.max(8, v * 0.4));
+  });
+
   // ── Animation controls
   document.getElementById('btn-idle').addEventListener('click', () => {
     graph.setBool('isTalking', false);
@@ -649,14 +807,28 @@ try {
     // ── Shadow pass (deferred path only, when shadows enabled)
     const activeShadow = (useDeferred && shadowEnabled) ? shadowMap : null;
     if (activeShadow) {
-      shadowMap.render(charNode.children, light, gpuSkin);
+      shadowMap.render(sceneNodes, light, gpuSkin);
     }
 
     // ── Main render
     if (useDeferred) {
-      deferredRenderer.render(charNode.children, camera, [light], gpuSkin, activeShadow);
+      deferredRenderer.render(sceneNodes, camera, [light], gpuSkin, activeShadow);
     } else {
-      forwardRenderer.render(charNode.children, camera, [light], gpuSkin);
+      forwardRenderer.render(sceneNodes, camera, [light], gpuSkin);
+    }
+
+    // Forward overlay passes for specialised eye/hair shaders
+    if (eyeEnabled || hairEnabled) {
+      // Clear depth so eye/hair overlay passes can render on top of deferred scene color.
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+    }
+    if (eyeEnabled) {
+      eyeNode.updateWorldMatrix(null);
+      eyeRenderer.render([eyeNode], camera, [light]);
+    }
+    if (hairEnabled) {
+      hairNode.updateWorldMatrix(null);
+      hairRenderer.render([hairNode], camera, [light]);
     }
 
     // ── FPS counter

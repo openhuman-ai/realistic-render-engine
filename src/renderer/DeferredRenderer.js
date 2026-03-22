@@ -28,6 +28,7 @@
 import { Shader }          from '../core/Shader.js';
 import { RenderTarget }    from '../core/RenderTarget.js';
 import { PostProcessStack } from './PostProcessStack.js';
+import { SSSPass }         from './SSSPass.js';
 import { Mat4 }            from '../math/Mat4.js';
 import { Mat3 }            from '../math/Mat3.js';
 
@@ -463,6 +464,16 @@ export class DeferredRenderer {
       depthAttachment: false,
     });
 
+    // ── SSS post-process (skin subsurface scattering)
+    //    Rendered between lighting pass and tonemap.
+    this._sssPass   = new SSSPass(glContext, stateCache, { width: w, height: h });
+    // Secondary HDR target written by SSS pass; tonemap reads from it when SSS is on.
+    this._sssTarget = new RenderTarget(gl, {
+      width: w, height: h,
+      colorAttachments: ['RGBA16F'],
+      depthAttachment: false,
+    });
+
     // ── Post-process stack (ACES tone-map)
     this._postStack = new PostProcessStack(glContext, stateCache, { width: w, height: h });
 
@@ -515,10 +526,22 @@ export class DeferredRenderer {
     // 3 ── Lighting pass → HDR target
     this._lightingPass(camera, dirLight, shadowMap);
 
-    // 4 ── Tone-map pass → canvas
-    const gl = this.gl;
+    // 4 ── Optional SSS pass (skin) → sssTarget
+    if (this._sssPass.enabled) {
+      this._sssTarget.bind();
+      this._sssPass.render(
+        this._hdrTarget.getColorTexture(0),
+        this._gBuffer.getColorTexture(1),
+        this._gBuffer.getColorTexture(0),
+        this._gBuffer.width,
+        this._gBuffer.height
+      );
+      this._sssTarget.unbind();
+    }
+
+    // 5 ── Tone-map pass → canvas
     this._postStack.render(
-      this._hdrTarget.getColorTexture(0),
+      this._sssPass.enabled ? this._sssTarget.getColorTexture(0) : this._hdrTarget.getColorTexture(0),
       this._gBuffer.width,
       this._gBuffer.height
     );
@@ -569,11 +592,33 @@ export class DeferredRenderer {
   /** @param {number} v */
   setIBLIntensity(v) { this._iblIntensity = Math.max(0, v); }
 
+  /** @param {boolean} enabled */
+  setSSSEnabled(enabled) {
+    this._sssPass.setEnabled(!!enabled);
+  }
+
+  /** @param {number} value */
+  setSSSStrength(value) {
+    this._sssPass.setStrength(value);
+  }
+
+  /** @param {number} value */
+  setSSSWidth(value) {
+    this._sssPass.setWidth(value);
+  }
+
+  /** @param {number} r @param {number} g @param {number} b */
+  setSSSColor(r, g, b) {
+    this._sssPass.setColor(r, g, b);
+  }
+
   /** Handle canvas resize. */
   resize(w, h) {
     const cache = this.cache;
     this._gBuffer.resize(w, h);
     this._hdrTarget.resize(w, h);
+    this._sssTarget.resize(w, h);
+    this._sssPass.resize(w, h);
     this._postStack.resize(w, h);
     cache.setViewport(0, 0, w, h);
   }
@@ -581,6 +626,8 @@ export class DeferredRenderer {
   destroy() {
     this._gBuffer?.destroy();
     this._hdrTarget?.destroy();
+    this._sssTarget?.destroy();
+    this._sssPass?.destroy();
     this._postStack?.destroy();
     this._geoShader?.destroy();
     this._geoSkinnedShader?.destroy();
@@ -589,7 +636,8 @@ export class DeferredRenderer {
     if (this._brdfLUT)      gl.deleteTexture(this._brdfLUT);
     if (this._irradianceTex) gl.deleteTexture(this._irradianceTex);
     if (this._envTex)        gl.deleteTexture(this._envTex);
-    this._gBuffer = this._hdrTarget = this._postStack = null;
+    this._gBuffer = this._hdrTarget = this._sssTarget = this._postStack = null;
+    this._sssPass = null;
     this._geoShader = this._geoSkinnedShader = this._lightShader = null;
     this._brdfLUT = this._irradianceTex = this._envTex = null;
   }
