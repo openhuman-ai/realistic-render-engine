@@ -47,6 +47,25 @@ void main() {
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Morph-target accumulation snippet (shared by static and skinned vertex shaders)
+// ─────────────────────────────────────────────────────────────────────────────
+const MORPH_VERT_UNIFORMS = /* glsl */`
+// ── Morph targets (texture-based, up to 52 FACS slots)
+uniform int             u_NumMorphs;
+uniform float           u_MorphWeights[52];
+uniform highp sampler2D u_MorphPosDeltaTex; // RGBA32F: width=vertexCount, height=numMorphs
+uniform highp sampler2D u_MorphNrmDeltaTex; // RGBA32F: width=vertexCount, height=numMorphs
+
+void applyMorphs(inout vec3 pos, inout vec3 nrm) {
+  for (int m = 0; m < u_NumMorphs; m++) {
+    float w = u_MorphWeights[m];
+    pos += w * texelFetch(u_MorphPosDeltaTex, ivec2(gl_VertexID, m), 0).xyz;
+    nrm += w * texelFetch(u_MorphNrmDeltaTex, ivec2(gl_VertexID, m), 0).xyz;
+  }
+}
+`;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Geometry pass — static vertex shader
 // ─────────────────────────────────────────────────────────────────────────────
 const GBUF_VERT = /* glsl */`#version 300 es
@@ -60,15 +79,18 @@ uniform mat4 u_ModelMatrix;
 uniform mat4 u_ViewMatrix;
 uniform mat4 u_ProjectionMatrix;
 uniform mat3 u_NormalMatrix;
-
+` + MORPH_VERT_UNIFORMS + /* glsl */`
 out vec3 v_WorldPos;
 out vec3 v_Normal;
 out vec2 v_TexCoord;
 
 void main() {
-  vec4 worldPos  = u_ModelMatrix * vec4(a_Position, 1.0);
+  vec3 pos = a_Position;
+  vec3 nrm = a_Normal;
+  applyMorphs(pos, nrm);
+  vec4 worldPos  = u_ModelMatrix * vec4(pos, 1.0);
   v_WorldPos     = worldPos.xyz;
-  v_Normal       = normalize(u_NormalMatrix * a_Normal);
+  v_Normal       = normalize(u_NormalMatrix * nrm);
   v_TexCoord     = a_TexCoord;
   gl_Position    = u_ProjectionMatrix * u_ViewMatrix * worldPos;
 }
@@ -90,7 +112,7 @@ uniform mat4 u_ModelMatrix;
 uniform mat4 u_ViewMatrix;
 uniform mat4 u_ProjectionMatrix;
 uniform highp sampler2D u_JointTexture;
-
+` + MORPH_VERT_UNIFORMS + /* glsl */`
 out vec3 v_WorldPos;
 out vec3 v_Normal;
 out vec2 v_TexCoord;
@@ -125,7 +147,8 @@ void applySkinning(inout vec3 pos, inout vec3 nrm) {
 void main() {
   vec3 pos = a_Position;
   vec3 nrm = a_Normal;
-  applySkinning(pos, nrm);
+  applyMorphs(pos, nrm);      // morph in bind pose
+  applySkinning(pos, nrm);    // then skin
   vec4 worldPos  = u_ModelMatrix * vec4(pos, 1.0);
   v_WorldPos     = worldPos.xyz;
   v_Normal       = normalize(mat3(u_ModelMatrix) * nrm);
@@ -497,6 +520,9 @@ export class DeferredRenderer {
 
     // ── Pre-allocated matrices
     this._normalMat = new Mat3();
+
+    // ── 1×1 RGBA32F dummy texture — bound to morph sampler units when no morph controller is active
+    this._morphDummyTex = this._createMorphDummy();
   }
 
   // ─────────────────────────────────────────── public API
@@ -510,8 +536,9 @@ export class DeferredRenderer {
    * @param {import('../scene/Light.js').Light[]} [lights]
    * @param {import('../animation/GPUSkinning.js').GPUSkinning|null} [gpuSkinning]
    * @param {import('./ShadowMap.js').ShadowMap|null} [shadowMap]
+   * @param {import('../animation/MorphController.js').MorphController|null} [morphController]
    */
-  render(scene, camera, lights = [], gpuSkinning = null, shadowMap = null) {
+  render(scene, camera, lights = [], gpuSkinning = null, shadowMap = null, morphController = null) {
     camera.updateProjection();
     camera.updateView();
 
@@ -521,7 +548,7 @@ export class DeferredRenderer {
     // 1 ── Shadow pass (handled externally by caller; shadowMap.render() called before this)
 
     // 2 ── Geometry pass → fill G-buffer
-    this._geometryPass(nodes, camera, gpuSkinning);
+    this._geometryPass(nodes, camera, gpuSkinning, morphController);
 
     // 3 ── Lighting pass → HDR target
     this._lightingPass(camera, dirLight, shadowMap);
@@ -633,19 +660,20 @@ export class DeferredRenderer {
     this._geoSkinnedShader?.destroy();
     this._lightShader?.destroy();
     const gl = this.gl;
-    if (this._brdfLUT)      gl.deleteTexture(this._brdfLUT);
-    if (this._irradianceTex) gl.deleteTexture(this._irradianceTex);
-    if (this._envTex)        gl.deleteTexture(this._envTex);
+    if (this._brdfLUT)        gl.deleteTexture(this._brdfLUT);
+    if (this._irradianceTex)  gl.deleteTexture(this._irradianceTex);
+    if (this._envTex)         gl.deleteTexture(this._envTex);
+    if (this._morphDummyTex)  gl.deleteTexture(this._morphDummyTex);
     this._gBuffer = this._hdrTarget = this._sssTarget = this._postStack = null;
     this._sssPass = null;
     this._geoShader = this._geoSkinnedShader = this._lightShader = null;
-    this._brdfLUT = this._irradianceTex = this._envTex = null;
+    this._brdfLUT = this._irradianceTex = this._envTex = this._morphDummyTex = null;
   }
 
   // ─────────────────────────────────────────── private passes
 
   /** @private — geometry pass: fill G-buffer MRT */
-  _geometryPass(nodes, camera, gpuSkinning) {
+  _geometryPass(nodes, camera, gpuSkinning, morphController) {
     const gl    = this.gl;
     const cache = this.cache;
 
@@ -666,11 +694,21 @@ export class DeferredRenderer {
       else staticNodes.push(node);
     }
 
+    // Morph texture units: 1 = pos deltas, 2 = nrm deltas
+    // (unit 0 is reserved for the joint texture in the skinned pass)
+    const MORPH_POS_UNIT = 1;
+    const MORPH_NRM_UNIT = 2;
+
     // Static geometry
     if (staticNodes.length) {
       cache.useProgram(this._geoShader.program);
       this._geoShader.setMat4('u_ViewMatrix',       camera.viewMatrix.e);
       this._geoShader.setMat4('u_ProjectionMatrix', camera.projectionMatrix.e);
+      if (morphController) {
+        morphController.bind(this._geoShader, MORPH_POS_UNIT, MORPH_NRM_UNIT, this._morphDummyTex);
+      } else {
+        this._bindNullMorphs(this._geoShader, MORPH_POS_UNIT, MORPH_NRM_UNIT);
+      }
       for (const node of staticNodes) {
         this._drawNodeGeo(node, this._geoShader, false);
       }
@@ -682,6 +720,11 @@ export class DeferredRenderer {
       this._geoSkinnedShader.setMat4('u_ViewMatrix',       camera.viewMatrix.e);
       this._geoSkinnedShader.setMat4('u_ProjectionMatrix', camera.projectionMatrix.e);
       gpuSkinning.bind(this._geoSkinnedShader, 0);
+      if (morphController) {
+        morphController.bind(this._geoSkinnedShader, MORPH_POS_UNIT, MORPH_NRM_UNIT, this._morphDummyTex);
+      } else {
+        this._bindNullMorphs(this._geoSkinnedShader, MORPH_POS_UNIT, MORPH_NRM_UNIT);
+      }
       for (const node of skinnedNodes) {
         this._drawNodeGeo(node, this._geoSkinnedShader, true);
       }
@@ -689,6 +732,21 @@ export class DeferredRenderer {
 
     cache.bindVAO(null);
     this._gBuffer.unbind();
+  }
+
+  /**
+   * Bind dummy morph textures and set u_NumMorphs=0 when no morph controller is active.
+   * @private
+   */
+  _bindNullMorphs(shader, posUnit, nrmUnit) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + posUnit);
+    gl.bindTexture(gl.TEXTURE_2D, this._morphDummyTex);
+    shader.setInt('u_MorphPosDeltaTex', posUnit);
+    gl.activeTexture(gl.TEXTURE0 + nrmUnit);
+    gl.bindTexture(gl.TEXTURE_2D, this._morphDummyTex);
+    shader.setInt('u_MorphNrmDeltaTex', nrmUnit);
+    shader.setInt('u_NumMorphs', 0);
   }
 
   /** @private — per-node geometry draw */
@@ -871,6 +929,25 @@ export class DeferredRenderer {
       irr: make1x1(1, 1, 1),
       env: make1x1(1, 1, 1),
     };
+  }
+
+  /**
+   * Create a 1×1 RGBA32F dummy texture used as a fallback for morph samplers.
+   * @private
+   * @returns {WebGLTexture}
+   */
+  _createMorphDummy() {
+    const gl  = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 1, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array(4));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
   }
 
   /** @private */

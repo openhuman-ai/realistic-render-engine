@@ -105,6 +105,11 @@ export class Shader {
     this.gl.uniformMatrix4fv(this.getUniformLocation(name), false, mat4array);
   }
 
+  /** Upload a float array uniform (e.g. for morph weights). @param {Float32Array} arr */
+  setFloat1v(name, arr) {
+    this.gl.uniform1fv(this.getUniformLocation(name), arr);
+  }
+
   /**
    * Bind a texture to a uniform sampler.
    * @param {string}       name

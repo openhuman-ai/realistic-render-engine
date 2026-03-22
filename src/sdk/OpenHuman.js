@@ -15,6 +15,7 @@ import { Light }               from '../scene/Light.js';
 import { Character }           from '../scene/Character.js';
 import { Node }                from '../scene/Node.js';
 import { Vec3 }                from '../math/Vec3.js';
+import { MorphController, FACS_NAMES } from '../animation/MorphController.js';
 
 // Module-level scratch Vec3 for SDK lookAt calls — avoids per-call allocation.
 const _lookAtScratch = new Vec3();
@@ -102,7 +103,7 @@ function buildDemoCharacter(gl) {
     },
   };
 
-  return new Character({ meshes: [meshData] });
+  return new Character({ meshes: [meshData] }, gl);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,8 +145,18 @@ class OpenHumanInstance {
     };
 
     this.morph = {
-      set(name, weight)   { character.setMorphWeight(name, weight); },
-      setMany(map)        { for (const [k, v] of Object.entries(map)) character.setMorphWeight(k, v); },
+      /** Set a single FACS morph weight by name. @param {string} name @param {number} weight */
+      set(name, weight)   {
+        character.setMorphWeight(name, weight);
+      },
+      /** Set multiple FACS morph weights from a { name: weight } map. */
+      setMany(map)        {
+        for (const [k, v] of Object.entries(map)) character.setMorphWeight(k, v);
+      },
+      /** Get all 52 FACS morph target names. @returns {readonly string[]} */
+      get names()         { return character._morphController?.names ?? FACS_NAMES; },
+      /** Get the current weight for a named morph target. @param {string} name @returns {number} */
+      getWeight(name)     { return character._morphController?.getWeight(name) ?? 0; },
     };
 
     this.streaming = {
@@ -279,7 +290,8 @@ class OpenHumanInstance {
         this._camera,
         this._lights,
         this._character._gpuSkinning,
-        this._shadowMap
+        this._shadowMap,
+        this._character._morphController
       );
     } else {
       this._character.render(this._renderer, this._camera, this._lights);
@@ -364,3 +376,4 @@ export { Skeleton, Joint }    from '../animation/Skeleton.js';
 export { AnimationClip, Pose } from '../animation/AnimationClip.js';
 export { AnimationGraph }      from '../animation/AnimationGraph.js';
 export { GPUSkinning }         from '../animation/GPUSkinning.js';
+export { MorphController, FACS_NAMES, MAX_MORPH_TARGETS } from '../animation/MorphController.js';

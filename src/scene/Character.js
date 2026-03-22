@@ -1,9 +1,10 @@
 /**
  * Character — wraps loaded mesh data, skeleton, and animation system.
  */
-import { Node }           from './Node.js';
-import { GPUSkinning }    from '../animation/GPUSkinning.js';
-import { AnimationGraph } from '../animation/AnimationGraph.js';
+import { Node }             from './Node.js';
+import { GPUSkinning }      from '../animation/GPUSkinning.js';
+import { AnimationGraph }   from '../animation/AnimationGraph.js';
+import { MorphController, FACS_NAMES } from '../animation/MorphController.js';
 
 export class Character {
   /**
@@ -33,8 +34,11 @@ export class Character {
       this._animGraph   = new AnimationGraph(this._skeleton);
     }
 
-    // Morph weight map — stub for future morph system
-    this._morphWeights = new Map();
+    // Morph controller — always created when gl is available
+    this._morphController = null;
+    if (gl) {
+      this._morphController = this._initMorphController(gl, this._meshes);
+    }
   }
 
   // ────────────────────────────────────────────────── animation API
@@ -84,8 +88,9 @@ export class Character {
    * @param {number} weight — [0, 1]
    */
   setMorphWeight(name, weight) {
-    this._morphWeights.set(name, Math.max(0, Math.min(1, weight)));
-    // TODO: update GPU morph-target buffer (next PR)
+    if (this._morphController) {
+      this._morphController.set(name, weight);
+    }
   }
 
   // ────────────────────────────────────────────────── update / render
@@ -114,5 +119,45 @@ export class Character {
   destroy() {
     this._gpuSkinning?.destroy();
     this._gpuSkinning = null;
+    this._morphController?.destroy();
+    this._morphController = null;
   }
-}
+
+  // ────────────────────────────────────────────────── private helpers
+
+  /**
+   * Initialise the MorphController from loaded mesh data.
+   * Uses FACS names by default; overrides with names from the first mesh that has morph targets.
+   * @private
+   */
+  _initMorphController(gl, meshes) {
+    // Look for a mesh with morph target data
+    let names       = FACS_NAMES;
+    let vertexCount = 0;
+    let targetMesh  = null;
+
+    for (const mesh of meshes) {
+      if (mesh.morphTargets && mesh.morphTargets.length > 0) {
+        targetMesh  = mesh;
+        vertexCount = mesh.vertexCount ?? 0;
+        // If the asset provided target names and they match FACS, use them;
+        // otherwise fall back to FACS_NAMES for the 52-slot controller
+        if (mesh.morphTargetNames && mesh.morphTargetNames.length > 0) {
+          names = mesh.morphTargetNames;
+        }
+        break;
+      }
+    }
+
+    const ctrl = new MorphController(gl, names, vertexCount);
+
+    // Upload per-morph deltas when mesh data is available
+    if (targetMesh) {
+      for (let i = 0; i < targetMesh.morphTargets.length; i++) {
+        const { position, normal } = targetMesh.morphTargets[i];
+        ctrl.uploadMorphDeltas(i, position, normal);
+      }
+    }
+
+    return ctrl;
+  }
