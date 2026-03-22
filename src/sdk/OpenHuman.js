@@ -187,7 +187,32 @@ class OpenHumanInstance {
           self._renderer.setIBLEnabled(enabled);
         }
       },
-      setSSSStrength(v)      { /* TODO: subsurface scattering strength uniform */ },
+      setSSSEnabled(enabled) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setSSSEnabled(enabled);
+        }
+      },
+      setSSSStrength(v) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setSSSStrength(v);
+        }
+      },
+      setSSSWidth(v) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setSSSWidth(v);
+        }
+      },
+      setSSSColor(r, g, b) {
+        if (self._renderer instanceof DeferredRenderer) {
+          self._renderer.setSSSColor(r, g, b);
+        }
+      },
+      setEyeParams(params = {}) {
+        self._eyeParams = { ...(self._eyeParams ?? {}), ...params };
+      },
+      setHairParams(params = {}) {
+        self._hairParams = { ...(self._hairParams ?? {}), ...params };
+      },
     };
   }
 
@@ -332,6 +357,9 @@ export class OpenHuman {
 export { GLContext, StateCache, ForwardRenderer, DeferredRenderer, ShadowMap, GLTFLoader, Camera, Light, Character, Node };
 export { VertexBuffer, IndexBuffer };
 export { PostProcessStack } from '../renderer/PostProcessStack.js';
+export { SSSPass }          from '../renderer/SSSPass.js';
+export { EyeRenderer }      from '../renderer/EyeRenderer.js';
+export { HairRenderer, buildHairCards } from '../renderer/HairRenderer.js';
 export { Skeleton, Joint }    from '../animation/Skeleton.js';
 export { AnimationClip, Pose } from '../animation/AnimationClip.js';
 export { AnimationGraph }      from '../animation/AnimationGraph.js';

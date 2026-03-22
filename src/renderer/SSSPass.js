@@ -88,6 +88,7 @@ precision highp float;
 uniform sampler2D u_HDROriginal;   // original (un-blurred) HDR
 uniform sampler2D u_HDRHBlurred;   // horizontally blurred HDR
 uniform sampler2D u_GNormalRough;  // G-buffer RT1
+uniform sampler2D u_AlbedoAO;      // G-buffer RT0 (for skin mask)
 uniform float     u_Width;         // kernel step multiplier
 uniform float     u_Strength;      // SSS blend strength (0..1+)
 uniform vec3      u_SSSColor;      // per-channel scatter tint
@@ -120,10 +121,18 @@ void main() {
 
   // Composite: add color-tinted scattered component onto original
   vec3 original = texelFetch(u_HDROriginal, fc, 0).rgb;
+  vec3 albedo   = texelFetch(u_AlbedoAO, fc, 0).rgb;
+
+  // Cheap skin mask from albedo hue (warm/red-biased surfaces get more SSS)
+  float redDom  = albedo.r - max(albedo.g, albedo.b);
+  // 3.0 boosts weak red-dominance into a usable mask range for typical skin albedo.
+  // 0.35 is a base threshold so neutral warm tones still receive subtle SSS.
+  float skinMask = clamp(redDom * 3.0 + 0.35, 0.0, 1.0);
+
   // Scattered = tinted blurred - original, represents extra scattering
   vec3 scattered = blurred * u_SSSColor;
   // Additive blend: original + scatter contribution
-  vec3 result = original + (scattered - original) * clamp(u_Strength, 0.0, 1.0);
+  vec3 result = original + (scattered - original) * clamp(u_Strength, 0.0, 1.0) * skinMask;
 
   fragColor = vec4(result, 1.0);
 }
@@ -182,10 +191,11 @@ export class SSSPass {
    *
    * @param {WebGLTexture} hdrTex        — HDR lighting result
    * @param {WebGLTexture} gNormalTex    — G-buffer RT1 (worldNormal * 0.5 + 0.5)
+   * @param {WebGLTexture} gAlbedoTex    — G-buffer RT0 (albedo + ao)
    * @param {number} w
    * @param {number} h
    */
-  render(hdrTex, gNormalTex, w, h) {
+  render(hdrTex, gNormalTex, gAlbedoTex, w, h) {
     if (!this.enabled) return;
 
     const gl    = this.gl;
@@ -224,6 +234,9 @@ export class SSSPass {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, gNormalTex);
     this._vShader.setInt('u_GNormalRough', 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, gAlbedoTex);
+    this._vShader.setInt('u_AlbedoAO', 3);
     this._vShader.setFloat('u_Width',    this.width);
     this._vShader.setFloat('u_Strength', this.strength);
     this._vShader.setVec3('u_SSSColor', this.color[0], this.color[1], this.color[2]);
