@@ -58,9 +58,8 @@ export class GPUSkinning {
     const n      = joints.length;
     if (n === 0) return;
 
-    // Reuse the skeleton's own pre-allocated DQ scratch if it has it,
-    // otherwise fall back to our own.
-    const dqs = skeleton._skinDQs ?? this._dqScratch;
+    // Use the skinning DQ scratch array from this instance
+    const dqs = this._dqScratch;
 
     skeleton.updateWorldMatrices();
     skeleton.computeSkinningDQs(dqs);

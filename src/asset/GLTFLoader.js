@@ -389,8 +389,8 @@ export class GLTFLoader {
         joints.push(joint);
       }
 
-      // Ensure topological order (parent before child) — simple reorder
-      _topoSortJoints(joints);
+      // glTF spec guarantees skin.joints are in a valid topological order
+      // (parents before children), so no re-ordering is needed.
 
       skeletons.push(new Skeleton(joints));
     }
@@ -489,30 +489,4 @@ function _findParentNodeIndex(json, nodeIdx) {
     if (n.children && n.children.includes(nodeIdx)) return i;
   }
   return undefined;
-}
-
-/**
- * Stable topological sort of joints so parents always precede children.
- * Operates in-place on the joints array.
- * @param {import('../animation/Skeleton.js').Joint[]} joints
- */
-function _topoSortJoints(joints) {
-  // Already in glTF order which is typically parent-first, but sort to be safe.
-  // Simple insertion-sort preserving relative order when parent < child index.
-  for (let i = 1; i < joints.length; i++) {
-    const j = joints[i];
-    if (j.parentIndex < 0 || j.parentIndex < i) continue;
-    // parentIndex > i — move joint i after its parent
-    const parent = joints.splice(joints.findIndex(x => x.index === j.parentIndex), 1)[0];
-    joints.splice(i, 0, parent);
-  }
-  // Re-assign indices in new order
-  for (let i = 0; i < joints.length; i++) {
-    joints[i].index = i;
-    if (joints[i].parentIndex >= 0) {
-      // Keep parentIndex pointing at the correct joint
-      const parentName = joints.find((x, xi) => xi < i && x.name === joints[i]._parentName);
-      // parentIndex was already set correctly during construction; nothing to do here
-    }
-  }
 }

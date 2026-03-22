@@ -132,15 +132,11 @@ class OpenHumanInstance {
     const self = this;
 
     this.animation = {
-      play(name)                  { character.playAnimation(name); },
-      crossFadeTo(name, duration) {
-        // Trigger transition via a temporary bool param
-        character.addTransition(character._animGraph?._currentState ?? '', name, '__crossfade__', duration);
-        character.setBool('__crossfade__', true);
-      },
-      setLayer(name, clip, opts)  { /* layer mask support — future PR */ },
-      setFloat(param, value)      { character.setFloat(param, value); },
-      setBool(param, value)       { character.setBool(param, value); },
+      play(name)              { character.playAnimation(name); },
+      crossFadeTo(name, dur)  { character._animGraph?.crossFadeTo(name, dur); },
+      setLayer(name, clip, opts) { /* layer mask support — future PR */ },
+      setFloat(param, value)  { character.setFloat(param, value); },
+      setBool(param, value)   { character.setBool(param, value); },
     };
 
     this.morph = {

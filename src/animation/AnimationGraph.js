@@ -126,6 +126,23 @@ export class AnimationGraph {
     this._layers[0].time = 0;
   }
 
+  /**
+   * Immediately begin a crossfade to a new state, bypassing the condition system.
+   * @param {string} to       — target state name
+   * @param {number} duration — crossfade duration in seconds
+   */
+  crossFadeTo(to, duration) {
+    if (!this._states.has(to)) {
+      console.warn(`[AnimationGraph] Unknown state: "${to}"`);
+      return;
+    }
+    if (this._targetState === to) return;  // already crossfading to this state
+    this._targetState   = to;
+    this._blendDuration = duration;
+    this._blendTime     = 0;
+    this._states.get(to).time = 0;
+  }
+
   // ──────────────────────────────────────────────── parameter API
   /** @param {string} name @param {number} value */
   setFloat(param, value) {

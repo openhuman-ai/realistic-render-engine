@@ -460,13 +460,13 @@ try {
   document.getElementById('btn-idle').addEventListener('click', () => {
     graph.setBool('isTalking', false);
     stateEl.textContent = 'idle (crossfading…)';
-    setTimeout(() => { if (stateEl.textContent.startsWith('idle')) stateEl.textContent = 'idle'; }, 400);
+    setTimeout(() => { if (stateEl.textContent.startsWith('idle')) stateEl.textContent = 'idle'; }, 380);
     currentAnim = 'idle';
   });
   document.getElementById('btn-talk').addEventListener('click', () => {
     graph.setBool('isTalking', true);
     stateEl.textContent = 'talk (crossfading…)';
-    setTimeout(() => { if (stateEl.textContent.startsWith('talk')) stateEl.textContent = 'talk'; }, 400);
+    setTimeout(() => { if (stateEl.textContent.startsWith('talk')) stateEl.textContent = 'talk'; }, 380);
     currentAnim = 'talk';
   });
 
