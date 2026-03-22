@@ -4,13 +4,21 @@
  * Supports:
  *   - Separate .bin buffers (fetched by URL)
  *   - Embedded base64 data URIs
- *   - POSITION / NORMAL / TEXCOORD_0 vertex attributes + indices
+ *   - POSITION / NORMAL / TEXCOORD_0 / JOINTS_0 / WEIGHTS_0 vertex attributes + indices
  *   - PBR metallic-roughness material properties
+ *   - Skin ingest: joints array + inverseBindMatrices → Skeleton
+ *   - Animation ingest: samplers/channels → AnimationClip[]
  *   - Stub warnings for KHR_draco_mesh_compression and KHR_texture_basisu
  *
- * Returns: { meshes: [{ vao, vertexBuffers, indexBuffer, indexCount, indexType, material }] }
+ * Returns: {
+ *   meshes:     [{ vao, vertexBuffers, indexBuffer, indexCount, indexType, material, skinned }],
+ *   skeletons:  Skeleton[],   (one per glTF skin, or empty)
+ *   animations: AnimationClip[]
+ * }
  */
 import { VertexBuffer, IndexBuffer } from '../core/Buffer.js';
+import { Joint, Skeleton }           from '../animation/Skeleton.js';
+import { AnimationClip }             from '../animation/AnimationClip.js';
 
 // glTF component type → typed array constructor
 const CTYPES = {
@@ -138,18 +146,21 @@ export class GLTFLoader {
 
   // ------------------------------------------------------------------- parse
   _parse(json, buffers) {
-    const gl     = this.gl;
     const meshes = [];
 
-    if (!json.meshes) return { meshes };
-
-    for (const meshDef of json.meshes) {
-      for (const prim of meshDef.primitives) {
-        const result = this._parsePrimitive(json, prim, buffers);
-        if (result) meshes.push(result);
+    if (json.meshes) {
+      for (const meshDef of json.meshes) {
+        for (const prim of meshDef.primitives) {
+          const result = this._parsePrimitive(json, prim, buffers);
+          if (result) meshes.push(result);
+        }
       }
     }
-    return { meshes };
+
+    const skeletons  = this._parseSkeletons(json, buffers);
+    const animations = this._parseAnimations(json, buffers);
+
+    return { meshes, skeletons, animations };
   }
 
   /** @private */
@@ -193,6 +204,26 @@ export class GLTFLoader {
     vertexBuffers.normal    = setupAttrib(attrs.NORMAL,     1);
     vertexBuffers.texCoord0 = setupAttrib(attrs.TEXCOORD_0, 2);
 
+    // Skinning attributes (optional)
+    let skinned = false;
+    if (attrs.JOINTS_0 !== undefined && attrs.WEIGHTS_0 !== undefined) {
+      skinned = true;
+      // JOINTS_0 — use float attribute (UNSIGNED_BYTE or UNSIGNED_SHORT cast to float)
+      const jointsAcc = json.accessors[attrs.JOINTS_0];
+      const jointsData = this._accessorToTypedArray(json, jointsAcc, buffers);
+      // Convert to Float32 so we can use vertexAttribPointer (avoids ivec4 attribute)
+      const jointsF32 = new Float32Array(jointsData.length);
+      for (let i = 0; i < jointsData.length; i++) jointsF32[i] = jointsData[i];
+      const jvb = new VertexBuffer(gl, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, jvb.buf);
+      gl.bufferData(gl.ARRAY_BUFFER, jointsF32, gl.STATIC_DRAW);
+      gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(3);
+      vertexBuffers.joints = jvb;
+
+      vertexBuffers.weights = setupAttrib(attrs.WEIGHTS_0, 4);
+    }
+
     // Index buffer
     let indexBuffer = null;
     let indexCount  = 0;
@@ -222,7 +253,7 @@ export class GLTFLoader {
     // Material
     const material = this._parseMaterial(json, prim.material);
 
-    return { vao, vertexBuffers, indexBuffer, indexCount, indexType, material };
+    return { vao, vertexBuffers, indexBuffer, indexCount, indexType, material, skinned };
   }
 
   /** @private */
@@ -287,4 +318,175 @@ export class GLTFLoader {
       console.warn('[GLTFLoader] KHR_texture_basisu detected but not supported. Textures may not load correctly.');
     }
   }
+
+  // ----------------------------------------------------------------- skins
+  /**
+   * Parse all glTF skins into Skeleton instances.
+   * @private
+   */
+  _parseSkeletons(json, buffers) {
+    if (!json.skins) return [];
+    const skeletons = [];
+
+    for (const skin of json.skins) {
+      const jointNodeIndices = skin.joints ?? [];
+      const n = jointNodeIndices.length;
+
+      // Build a mapping: glTF node index → skeleton joint index
+      const nodeToJoint = new Map();
+      jointNodeIndices.forEach((ni, ji) => nodeToJoint.set(ni, ji));
+
+      // Parse inverse bind matrices
+      let ibmData = null;
+      if (skin.inverseBindMatrices !== undefined) {
+        const acc = json.accessors[skin.inverseBindMatrices];
+        ibmData   = this._accessorToTypedArray(json, acc, buffers);
+      }
+
+      const joints = [];
+      for (let ji = 0; ji < n; ji++) {
+        const nodeIdx = jointNodeIndices[ji];
+        const node    = json.nodes?.[nodeIdx];
+        const name    = node?.name ?? `joint_${ji}`;
+
+        // Determine parent joint index (first ancestor that is also a joint)
+        let parentJointIdx = -1;
+        if (node) {
+          const parentNodeIdx = _findParentNodeIndex(json, nodeIdx);
+          if (parentNodeIdx !== undefined && nodeToJoint.has(parentNodeIdx)) {
+            parentJointIdx = nodeToJoint.get(parentNodeIdx);
+          }
+        }
+
+        const joint = new Joint(name, ji, parentJointIdx);
+
+        // Inverse bind matrix (column-major Mat4)
+        if (ibmData) {
+          joint.inverseBindMatrix.e.set(ibmData.subarray(ji * 16, ji * 16 + 16));
+        }
+        // else remains identity — acceptable for unrigged skins
+
+        // Seed local pose from glTF node TRS (bind pose)
+        if (node) {
+          if (node.translation) {
+            joint.localTranslation.e[0] = node.translation[0];
+            joint.localTranslation.e[1] = node.translation[1];
+            joint.localTranslation.e[2] = node.translation[2];
+          }
+          if (node.rotation) {
+            joint.localRotation.e[0] = node.rotation[0];
+            joint.localRotation.e[1] = node.rotation[1];
+            joint.localRotation.e[2] = node.rotation[2];
+            joint.localRotation.e[3] = node.rotation[3];
+          }
+          if (node.scale) {
+            joint.localScale.e[0] = node.scale[0];
+            joint.localScale.e[1] = node.scale[1];
+            joint.localScale.e[2] = node.scale[2];
+          }
+        }
+
+        joints.push(joint);
+      }
+
+      // glTF spec guarantees skin.joints are in a valid topological order
+      // (parents before children), so no re-ordering is needed.
+
+      skeletons.push(new Skeleton(joints));
+    }
+
+    return skeletons;
+  }
+
+  // --------------------------------------------------------------- animations
+  /**
+   * Parse all glTF animations into AnimationClip instances.
+   * Each skeleton in the file shares the same glTF node index space, so
+   * channels reference glTF node indices which callers must map to joint
+   * indices (stored in channel.targetNodeIndex for caller convenience).
+   * @private
+   */
+  _parseAnimations(json, buffers) {
+    if (!json.animations) return [];
+    const clips = [];
+
+    for (const anim of json.animations) {
+      const samplers  = anim.samplers ?? [];
+      const channels  = anim.channels ?? [];
+      const duration  = this._animationDuration(json, samplers, buffers);
+
+      const parsedChannels = [];
+      for (const ch of channels) {
+        const sampler = samplers[ch.sampler];
+        if (!sampler) continue;
+
+        const target = ch.target;
+        if (!target || target.node === undefined) continue;
+
+        const prop = target.path; // 'translation' | 'rotation' | 'scale' | 'weights'
+        if (prop === 'weights') continue; // handled in future morph PR
+
+        const interp = (sampler.interpolation ?? 'LINEAR').toUpperCase();
+
+        // Input (times) accessor
+        const timesAcc = json.accessors[sampler.input];
+        const times    = new Float32Array(
+          this._accessorToTypedArray(json, timesAcc, buffers));
+
+        // Output (values) accessor
+        const valuesAcc = json.accessors[sampler.output];
+        const values    = new Float32Array(
+          this._accessorToTypedArray(json, valuesAcc, buffers));
+
+        parsedChannels.push({
+          targetNodeIndex: target.node,
+          targetJointIndex: target.node, // remapped by caller if needed
+          property:        prop,
+          interpolation:   interp,
+          times,
+          values,
+        });
+      }
+
+      clips.push(new AnimationClip(anim.name ?? `animation_${clips.length}`, duration, parsedChannels));
+    }
+
+    return clips;
+  }
+
+  /** Compute animation duration from sampler input accessors. @private */
+  _animationDuration(json, samplers, buffers) {
+    let max = 0;
+    for (const s of samplers) {
+      if (s.input === undefined) continue;
+      const acc  = json.accessors[s.input];
+      if (acc.max) {
+        max = Math.max(max, acc.max[0]);
+      } else {
+        // Fallback: parse the accessor to find the last time value
+        const times = this._accessorToTypedArray(json, acc, buffers);
+        if (times.length) max = Math.max(max, times[times.length - 1]);
+      }
+    }
+    return max > 0 ? max : 1;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module-level helpers (not exported)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Find the parent node index for a given node index in the glTF scene graph.
+ * Returns undefined if the node has no parent or no nodes are present.
+ * @param {object} json  @param {number} nodeIdx
+ * @returns {number|undefined}
+ */
+function _findParentNodeIndex(json, nodeIdx) {
+  if (!json.nodes) return undefined;
+  for (let i = 0; i < json.nodes.length; i++) {
+    const n = json.nodes[i];
+    if (n.children && n.children.includes(nodeIdx)) return i;
+  }
+  return undefined;
 }
