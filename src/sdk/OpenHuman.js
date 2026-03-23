@@ -16,6 +16,7 @@ import { Character }           from '../scene/Character.js';
 import { Node }                from '../scene/Node.js';
 import { Vec3 }                from '../math/Vec3.js';
 import { MorphController, FACS_NAMES } from '../animation/MorphController.js';
+import { StreamingAnimationPlayer }    from '../animation/StreamingAnimationPlayer.js';
 
 // Module-level scratch Vec3 for SDK lookAt calls — avoids per-call allocation.
 const _lookAtScratch = new Vec3();
@@ -159,11 +160,126 @@ class OpenHumanInstance {
       getWeight(name)     { return character._morphController?.getWeight(name) ?? 0; },
     };
 
-    this.streaming = {
-      connect(url)   { /* TODO: WebSocket / WebRTC data channel */ },
-      disconnect()   { /* TODO */ },
-      onData(cb)     { /* TODO */ },
-    };
+    this.streaming = (() => {
+      /** @type {StreamingAnimationPlayer|null} */
+      let player = null;
+
+      const api = {
+        /**
+         * Connect to a streaming endpoint (WebSocket or HTTP).
+         * @param {string} url — ws:// / wss:// or http:// / https://
+         * @param {'ws'|'http'} [type] — transport override (auto-detected when omitted)
+         * @param {object} [opts] — StreamingAnimationPlayer constructor options
+         */
+        connect(url, type, opts) {
+          if (!player) {
+            player = new StreamingAnimationPlayer(opts);
+
+            player.on('connect',      d => self._emit('streaming:connect',      d));
+            player.on('disconnect',   d => self._emit('streaming:disconnect',   d));
+            player.on('error',        d => self._emit('streaming:error',        d));
+            player.on('drop',         d => self._emit('streaming:drop',         d));
+            player.on('reconnecting', d => self._emit('streaming:reconnecting', d));
+            player.on('data', d => {
+              self._emit('streaming:data', d);
+            });
+          }
+          player.connect(url, type);
+        },
+
+        /** Disconnect from the current stream. */
+        disconnect() {
+          player?.disconnect();
+        },
+
+        /**
+         * Register a callback for raw incoming frame events.
+         * @param {Function} cb — receives { frameId, serverTs }
+         */
+        onData(cb) {
+          if (!player) player = new StreamingAnimationPlayer();
+          player.on('data', cb);
+        },
+
+        /**
+         * Get the interpolated pose for the current moment.
+         * Applies the result directly to the character's morph controller
+         * and skeleton (if available) when applyToCharacter is true.
+         *
+         * @param {number}  [nowMs=performance.now()]
+         * @param {boolean} [applyToCharacter=true]
+         * @returns {{ joints: Float32Array|null, facs: Float32Array|null, frameId: number, age: number }|null}
+         */
+        getInterpolatedPose(nowMs, applyToCharacter = true) {
+          if (!player) return null;
+          const pose = player.getInterpolatedPose(nowMs);
+          if (!pose) return null;
+
+          if (applyToCharacter) {
+            // Apply FACS weights to the morph controller
+            if (pose.facs && character._morphController) {
+              const mc = character._morphController;
+              for (let i = 0; i < pose.facs.length && i < mc.numMorphs; i++) {
+                mc.setByIndex(i, pose.facs[i]);
+              }
+            }
+
+            // Apply joint transforms to the skeleton if available
+            if (pose.joints && character._skeleton) {
+              const skel = character._skeleton;
+              const joints = skel.joints ?? [];
+              const n = Math.min(pose.joints.length / 7 | 0, joints.length);
+              for (let j = 0; j < n; j++) {
+                const base = j * 7;
+                const joint = joints[j];
+                if (!joint) continue;
+                if (joint.node) {
+                  joint.node.position.set(
+                    pose.joints[base],
+                    pose.joints[base + 1],
+                    pose.joints[base + 2]
+                  );
+                  // quaternion as x,y,z,w
+                  joint.node.rotation.set(
+                    pose.joints[base + 3],
+                    pose.joints[base + 4],
+                    pose.joints[base + 5],
+                    pose.joints[base + 6]
+                  );
+                }
+              }
+            }
+          }
+
+          return pose;
+        },
+
+        /** Performance stats from the underlying jitter buffer player. */
+        get stats() {
+          return player?.stats ?? null;
+        },
+
+        /**
+         * Set jitter buffer target delay in milliseconds (default 60 ms).
+         * Lower = less latency but more susceptibility to packet-loss pops.
+         * @param {number} ms
+         */
+        setTargetDelay(ms) {
+          player?.setTargetDelay(ms);
+        },
+
+        /** Destroy the underlying player and free resources. */
+        destroy() {
+          player?.destroy();
+          player = null;
+        },
+
+        /** Expose the raw player instance for advanced use. */
+        get player() { return player; },
+      };
+
+      return api;
+    })();
 
     this.camera = {
       setPosition(x, y, z) { camera.setPosition(x, y, z); },
@@ -377,3 +493,4 @@ export { AnimationClip, Pose } from '../animation/AnimationClip.js';
 export { AnimationGraph }      from '../animation/AnimationGraph.js';
 export { GPUSkinning }         from '../animation/GPUSkinning.js';
 export { MorphController, FACS_NAMES, MAX_MORPH_TARGETS } from '../animation/MorphController.js';
+export { StreamingAnimationPlayer, encodeFrame, STREAM_TYPE_WS, STREAM_TYPE_HTTP } from '../animation/StreamingAnimationPlayer.js';

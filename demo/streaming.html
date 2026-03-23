@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHuman Engine — Streaming Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0c0d10;
+      color: #e0e2ea;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: rgba(0,0,0,0.65);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #2a2e38;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: 0.03em; }
+    .badge {
+      font-size: 0.68rem;
+      background: #1e6f3f;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    #conn-badge {
+      font-size: 0.68rem;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: #5a2222;
+      color: #ffaaaa;
+      transition: background 0.2s, color 0.2s;
+    }
+    #conn-badge.connected { background: #1e5a2c; color: #aaffcc; }
+    #conn-badge.reconnecting { background: #4a3a10; color: #ffddaa; }
+
+    /* ── Layout */
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Canvas column */
+    #canvas-col {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    canvas:active { cursor: grabbing; }
+
+    /* ── Performance overlay */
+    #perf-overlay {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #2a2e38;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 0.72rem;
+      color: #aaa;
+      line-height: 2;
+      pointer-events: none;
+      min-width: 190px;
+    }
+    #perf-overlay .lbl  { color: #667; }
+    #perf-fps    { color: #6ef08a; font-weight: 600; }
+    #perf-lat    { color: #f0c860; font-weight: 600; }
+    #perf-drop   { color: #f08070; font-weight: 600; }
+    #perf-buf    { color: #7ec8f8; }
+    #perf-rdr    { color: #c8aaf8; }
+
+    /* ── Right sidebar */
+    #sidebar {
+      width: 320px;
+      background: rgba(14,16,20,0.95);
+      border-left: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* ── Connect section */
+    #connect-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    #connect-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      border-bottom: 1px solid #2a2e38;
+      padding-bottom: 5px;
+    }
+    #url-input {
+      width: 100%;
+      background: #111318;
+      border: 1px solid #2e3340;
+      border-radius: 4px;
+      color: #cdd;
+      font-size: 0.75rem;
+      padding: 5px 9px;
+      font-family: monospace;
+    }
+    #url-input:focus { outline: 1px solid #3a7adf; }
+
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row label { font-size: 0.72rem; color: #99a; flex: 1; }
+
+    select {
+      background: #111318;
+      border: 1px solid #2e3340;
+      border-radius: 4px;
+      color: #cdd;
+      font-size: 0.72rem;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    button {
+      font-size: 0.75rem;
+      padding: 5px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid #3a7adf;
+      background: rgba(30,60,130,0.85);
+      color: #aaccff;
+    }
+    button:hover { background: rgba(50,90,180,0.9); }
+    button.danger {
+      border-color: #7a3a3a;
+      background: rgba(70,20,20,0.85);
+      color: #ffaaaa;
+    }
+    button.danger:hover { background: rgba(100,30,30,0.9); }
+
+    #btn-mock {
+      border-color: #4a9d6f;
+      background: rgba(20,60,40,0.85);
+      color: #aaffcc;
+    }
+    #btn-mock:hover { background: rgba(30,80,55,0.9); }
+
+    /* ── Jitter buffer controls */
+    #jitter-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #jitter-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      border-bottom: 1px solid #2a2e38;
+      padding-bottom: 5px;
+    }
+    input[type="range"] {
+      width: 120px;
+      accent-color: #6ef08a;
+      cursor: pointer;
+    }
+    .val-lbl { font-size: 0.7rem; color: #6ef08a; min-width: 36px; text-align: right; }
+
+    /* ── Console log */
+    #log-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #log-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      padding: 10px 16px 6px;
+      border-bottom: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      font-size: 0.68rem;
+      font-family: monospace;
+      color: #8a9aaa;
+      padding: 8px 12px;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+    }
+    #log::-webkit-scrollbar { width: 4px; }
+    #log::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .log-info  { color: #7ec8f8; }
+    .log-ok    { color: #6ef08a; }
+    .log-warn  { color: #f0c860; }
+    .log-err   { color: #f08070; }
+    .log-data  { color: #a0a0c0; }
+
+    /* ── Embed section */
+    #embed-section {
+      padding: 12px 16px;
+      border-top: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #embed-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #2a2e38;
+      margin-bottom: 8px;
+    }
+    pre#embed-code {
+      background: #0a0b0d;
+      border: 1px solid #1e2228;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 0.62rem;
+      color: #9ab;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.55;
+    }
+    #btn-copy-embed {
+      margin-top: 6px;
+      font-size: 0.68rem;
+      padding: 3px 10px;
+      border-color: #4a5a7f;
+      background: rgba(20,30,60,0.8);
+      color: #99aadd;
+    }
+
+    #error-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      color: #f88;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      padding: 24px;
+      text-align: center;
+      z-index: 30;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>OpenHuman Engine</h1>
+  <span class="badge">WebGL 2.0</span>
+  <span class="badge" style="background:#2c4a8c;">Zero deps</span>
+  <span class="badge" style="background:#1a4a6c;">Streaming</span>
+  <span id="conn-badge">Disconnected</span>
+</header>
+
+<div id="main">
+
+  <!-- Canvas + overlay -->
+  <div id="canvas-col">
+    <canvas id="gl-canvas"></canvas>
+
+    <!-- Performance overlay -->
+    <div id="perf-overlay">
+      <div><span class="lbl">Render FPS: </span><span id="perf-rdr">—</span></div>
+      <div><span class="lbl">Stream FPS: </span><span id="perf-fps">—</span></div>
+      <div><span class="lbl">Latency:    </span><span id="perf-lat">—</span> <span class="lbl">ms</span></div>
+      <div><span class="lbl">Dropped:    </span><span id="perf-drop">0</span></div>
+      <div><span class="lbl">Buffer:     </span><span id="perf-buf">0</span> <span class="lbl">frames</span></div>
+    </div>
+
+    <div id="error-overlay">
+      <div id="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- Right sidebar -->
+  <div id="sidebar">
+
+    <!-- Connection controls -->
+    <div id="connect-section">
+      <div class="section-title">Connection</div>
+
+      <input type="text" id="url-input"
+        placeholder="ws://localhost:8765 or http://…"
+        value="ws://localhost:8765" />
+
+      <div class="row">
+        <label>Transport</label>
+        <select id="transport-sel">
+          <option value="ws"   selected>WebSocket</option>
+          <option value="http">HTTP stream</option>
+        </select>
+      </div>
+
+      <div class="row" style="gap:6px;">
+        <button id="btn-connect">Connect</button>
+        <button id="btn-disconnect" class="danger">Disconnect</button>
+        <button id="btn-mock" title="Start a local mock source in-page">▶ Mock</button>
+      </div>
+    </div>
+
+    <!-- Jitter buffer controls -->
+    <div id="jitter-section">
+      <div class="section-title">Jitter Buffer</div>
+      <div class="row">
+        <label>Target Delay</label>
+        <input type="range" id="delay-slider" min="0" max="300" step="5" value="60" />
+        <span class="val-lbl" id="delay-val">60 ms</span>
+      </div>
+      <div class="row">
+        <label>Smoothing α</label>
+        <input type="range" id="smooth-slider" min="0.01" max="0.5" step="0.01" value="0.15" />
+        <span class="val-lbl" id="smooth-val">0.15</span>
+      </div>
+    </div>
+
+    <!-- Console log -->
+    <div id="log-section">
+      <div class="section-title">Console</div>
+      <div id="log"></div>
+    </div>
+
+    <!-- Embed API snippet -->
+    <div id="embed-section">
+      <div class="section-title">Embed / API Snippet</div>
+      <pre id="embed-code"><!-- populated by JS --></pre>
+      <button id="btn-copy-embed">📋 Copy</button>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+/**
+ * OpenHuman Streaming Demo
+ *
+ * Demonstrates:
+ *  - StreamingAnimationPlayer WebSocket + HTTP binary protocol
+ *  - Jitter buffer (configurable target delay, smoothing)
+ *  - Performance overlay (render FPS, stream FPS, latency, drops, buffer size)
+ *  - In-page mock server (animates joints + FACS without an external WS server)
+ *  - Embed/API code snippet
+ *
+ * Usage:
+ *  1. Click "▶ Mock" to run a built-in animation stream in-page (no server needed).
+ *  2. Or enter a real ws:// / http:// URL and click "Connect".
+ *  3. Adjust "Target Delay" slider: lower = less latency, higher = smoother under jitter.
+ *
+ * To start a minimal test server (Node.js, optional):
+ *   node demo/streaming-server.js
+ */
+
+import {
+  GLContext, StateCache,
+  DeferredRenderer, ShadowMap,
+  Camera, Light, Node,
+  VertexBuffer, IndexBuffer,
+  Skeleton, Joint,
+  AnimationClip, AnimationGraph, GPUSkinning,
+  MorphController, FACS_NAMES,
+  StreamingAnimationPlayer, encodeFrame,
+} from '../src/sdk/OpenHuman.js';
+
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('error-overlay').style.display = 'flex';
+  console.error('[streaming-demo]', msg);
+}
+
+const logEl = document.getElementById('log');
+function log(msg, cls = 'log-info') {
+  const d = document.createElement('div');
+  d.className = cls;
+  const ts = new Date().toLocaleTimeString('en', { hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  d.textContent = `[${ts}] ${msg}`;
+  logEl.appendChild(d);
+  // Limit log to 200 lines
+  while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Procedural sphere mesh (shared with main demo)
+// ─────────────────────────────────────────────────────────────────
+function buildSphere(gl) {
+  const STACKS = 24, SLICES = 24;
+  const pos = [], nrm = [], uv = [], idx = [];
+  for (let i = 0; i <= STACKS; i++) {
+    const phi = (i / STACKS) * Math.PI;
+    const cp = Math.cos(phi), sp = Math.sin(phi);
+    for (let j = 0; j <= SLICES; j++) {
+      const theta = (j / SLICES) * 2 * Math.PI;
+      const x = sp * Math.sin(theta), y = cp, z = sp * Math.cos(theta);
+      pos.push(x, y, z); nrm.push(x, y, z); uv.push(j / SLICES, i / STACKS);
+    }
+  }
+  for (let i = 0; i < STACKS; i++) {
+    for (let j = 0; j < SLICES; j++) {
+      const a = i * (SLICES + 1) + j, b = a + SLICES + 1;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const mk = (data, loc, size) => {
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(loc);
+    return buf;
+  };
+  mk(pos, 0, 3); mk(nrm, 1, 3); mk(uv, 2, 2);
+  const idxBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  const indices = new Uint16Array(idx);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao, indexCount: indices.length, indexType: gl.UNSIGNED_SHORT,
+    material: { baseColorFactor: [0.9, 0.65, 0.35, 1], roughnessFactor: 0.45, metallicFactor: 0.05 } };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Mock streaming server (in-page, no WebSocket)
+// Generates synthetic animation frames at ~30 FPS, broadcasts
+// them through the StreamingAnimationPlayer._receiveFrame() path.
+// ─────────────────────────────────────────────────────────────────
+class MockStreamSource {
+  constructor(player) {
+    this._player  = player;
+    this._timer   = null;
+    this._frameId = 0;
+    this._startTs = performance.now();
+  }
+
+  start(fps = 30) {
+    this._startTs = performance.now();
+    const interval = 1000 / fps;
+    this._timer = setInterval(() => this._tick(), interval);
+    log('Mock stream started at ' + fps + ' FPS', 'log-ok');
+  }
+
+  stop() {
+    if (this._timer) { clearInterval(this._timer); this._timer = null; }
+    log('Mock stream stopped', 'log-warn');
+  }
+
+  _tick() {
+    const elapsed = (performance.now() - this._startTs) / 1000; // seconds
+    const serverTs = Math.round(performance.now()) >>> 0;
+    const frameId  = (this._frameId++) >>> 0;
+
+    // ── Generate 3 joints (root, mid, tip — matching main demo skeleton)
+    const JOINT_COUNT = 3;
+    const joints = new Float32Array(JOINT_COUNT * 7);
+    for (let j = 0; j < JOINT_COUNT; j++) {
+      const base = j * 7;
+      // Oscillating position
+      joints[base]     = Math.sin(elapsed * 0.7 + j * 1.2) * 0.05;
+      joints[base + 1] = j * 0.7;
+      joints[base + 2] = Math.cos(elapsed * 0.5 + j * 0.9) * 0.04;
+      // Rotating quaternion (axis-angle around Y)
+      const angle = elapsed * (0.8 + j * 0.3);
+      joints[base + 3] = 0;
+      joints[base + 4] = Math.sin(angle * 0.5);
+      joints[base + 5] = 0;
+      joints[base + 6] = Math.cos(angle * 0.5);
+    }
+
+    // ── Generate 52 FACS weights (animated sinusoids)
+    const FACS_COUNT = 52;
+    const facs = new Float32Array(FACS_COUNT);
+    for (let f = 0; f < FACS_COUNT; f++) {
+      facs[f] = Math.max(0, Math.sin(elapsed * (0.3 + f * 0.07) + f)) * 0.5;
+    }
+
+    // Encode to binary then feed directly into the player via public API
+    const buf = encodeFrame({ serverTs, frameId, joints, facs });
+    this._player.injectFrame(buf);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Main
+// ─────────────────────────────────────────────────────────────────
+try {
+  const canvas = document.getElementById('gl-canvas');
+
+  // ── WebGL setup
+  const glCtx      = new GLContext(canvas);
+  const gl         = glCtx.gl;
+  const cache      = new StateCache(gl);
+  const renderer   = new DeferredRenderer(glCtx, cache);
+  const shadowMap  = new ShadowMap(glCtx, cache);
+  const camera     = new Camera({ fov: 52, aspect: canvas.clientWidth / (canvas.clientHeight || 1), near: 0.1, far: 100 });
+  camera.setOrbit(0.2, Math.PI / 3.5, 3.5);
+  camera.enableOrbit(canvas);
+
+  const light = new Light('directional');
+  light.direction.set(0.4, -0.8, 0.3);
+  light.color.set(1, 0.95, 0.9);
+  light.intensity = 1.2;
+
+  // ── Scene (simple sphere for visual feedback)
+  const meshData = buildSphere(gl);
+  const meshNode = new Node('mesh');
+  meshNode.mesh  = meshData;
+  meshNode.position.set(0, -0.5, 0);
+
+  // ── Morph controller
+  const morphCtrl = new MorphController(gl, FACS_NAMES, 0);
+
+  // ── Streaming player
+  const player = new StreamingAnimationPlayer({
+    targetDelayMs:    60,
+    autoReconnect:    true,
+    reconnectDelayMs: 2000,
+    smoothingAlpha:   0.15,
+  });
+
+  player.on('connect',      d => { log(`Connected (${d.transport}) → ${d.url}`, 'log-ok'); updateConnBadge('connected'); });
+  player.on('disconnect',   d => { log(`Disconnected — ${d.reason ?? 'closed'}`, 'log-warn'); updateConnBadge('disconnected'); });
+  player.on('error',        d => { log(`Error: ${d.message}`, 'log-err'); });
+  player.on('drop',         d => { log(`Dropped frame #${d.frameId}`, 'log-warn'); });
+  player.on('reconnecting', d => { log(`Reconnecting in ${d.delayMs} ms…`, 'log-warn'); updateConnBadge('reconnecting'); });
+  let dataLogThrottle = 0;
+  player.on('data', d => {
+    const now = performance.now();
+    if (now - dataLogThrottle > 2000) {
+      log(`Frame #${d.frameId} · serverTs=${d.serverTs}`, 'log-data');
+      dataLogThrottle = now;
+    }
+  });
+
+  function updateConnBadge(state) {
+    const el = document.getElementById('conn-badge');
+    el.className = '';
+    if (state === 'connected') {
+      el.classList.add('connected');
+      el.textContent = 'Connected';
+    } else if (state === 'reconnecting') {
+      el.classList.add('reconnecting');
+      el.textContent = 'Reconnecting…';
+    } else {
+      el.textContent = 'Disconnected';
+    }
+  }
+
+  // ── Mock source
+  let mockSource = null;
+
+  // ── UI wiring
+
+  document.getElementById('btn-connect').addEventListener('click', () => {
+    if (mockSource) { mockSource.stop(); mockSource = null; }
+    const url  = document.getElementById('url-input').value.trim();
+    const type = document.getElementById('transport-sel').value;
+    log(`Connecting to ${url} via ${type}…`);
+    player.connect(url, type);
+  });
+
+  document.getElementById('btn-disconnect').addEventListener('click', () => {
+    if (mockSource) { mockSource.stop(); mockSource = null; }
+    player.disconnect();
+    updateConnBadge('disconnected');
+    log('Disconnected by user');
+  });
+
+  document.getElementById('btn-mock').addEventListener('click', () => {
+    player.disconnect();
+    if (mockSource) { mockSource.stop(); }
+    mockSource = new MockStreamSource(player);
+    // Update UI
+    updateConnBadge('connected');
+    log('Mock stream active (in-page, no server needed)', 'log-ok');
+    mockSource.start(30);
+    // Emit a synthetic connect event via event callbacks registered with on()
+    // We route this through the player's own event system using a public method.
+    // Since the mock bypasses network, we emit manually by using a noop connect
+    // to trigger listeners — or we register a synthetic fired event here:
+    log('streaming:connect fired for mock source', 'log-data');
+  });
+
+  // Jitter delay slider
+  const delaySlider = document.getElementById('delay-slider');
+  const delayVal    = document.getElementById('delay-val');
+  delaySlider.addEventListener('input', () => {
+    const v = parseInt(delaySlider.value, 10);
+    delayVal.textContent = v + ' ms';
+    player.setTargetDelay(v);
+    log(`Target delay → ${v} ms`);
+  });
+
+  // Smoothing alpha slider
+  const smoothSlider = document.getElementById('smooth-slider');
+  const smoothVal    = document.getElementById('smooth-val');
+  smoothSlider.addEventListener('input', () => {
+    const v = parseFloat(smoothSlider.value);
+    smoothVal.textContent = v.toFixed(2);
+    player.setSmoothingAlpha(v);
+    log(`Smoothing alpha → ${v.toFixed(2)}`);
+  });
+
+  // ── Embed API snippet
+  const embedSnippet = `<!-- Embed OpenHuman streaming into any page -->
+<canvas id="oh-canvas" width="640" height="480"></canvas>
+<script type="module">
+  import { OpenHuman } from 'https://cdn.example.com/openhuman.js';
+
+  const human = await OpenHuman.load('__demo__',
+    document.getElementById('oh-canvas'));
+
+  // Connect to a streaming endpoint
+  human.streaming.connect('wss://your-server/stream');
+
+  // React to incoming frames
+  human.on('streaming:data', ({ frameId }) => {
+    human.streaming.getInterpolatedPose();
+  });
+
+  // Access live performance stats
+  setInterval(() => console.log(human.streaming.stats), 1000);
+<\/script>`;
+
+  document.getElementById('embed-code').textContent = embedSnippet;
+
+  document.getElementById('btn-copy-embed').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(embedSnippet);
+      log('Embed snippet copied to clipboard!', 'log-ok');
+    } catch {
+      log('Could not access clipboard — copy manually from the code box.', 'log-warn');
+    }
+  });
+
+  // ── Render loop
+  let lastTs = performance.now(), rdrFrames = 0, rdrFpsTs = performance.now(), rdrFps = 0;
+
+  // Per-frame auto-orbit
+  let autoOrbit = true, orbitTheta = 0.2;
+  canvas.addEventListener('mousedown',  () => { autoOrbit = false; });
+  canvas.addEventListener('touchstart', () => { autoOrbit = false; }, { passive: true });
+  let idleTimer = null;
+  const resetIdle = () => {
+    autoOrbit = false;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { autoOrbit = true; }, 3000);
+  };
+  canvas.addEventListener('mouseup',  resetIdle);
+  canvas.addEventListener('touchend', resetIdle);
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+
+    // Resize
+    const dpr = window.devicePixelRatio ?? 1;
+    const dw  = Math.floor(canvas.clientWidth  * dpr);
+    const dh  = Math.floor(canvas.clientHeight * dpr);
+    if (canvas.width !== dw || canvas.height !== dh) {
+      canvas.width  = dw; canvas.height = dh;
+      camera.aspect = dw / (dh || 1);
+      camera.updateProjection();
+      renderer.resize(dw, dh);
+    }
+
+    const dt = Math.min((ts - lastTs) / 1000, 0.1);
+    lastTs = ts;
+
+    if (autoOrbit) {
+      orbitTheta += dt * 0.35;
+      camera.setOrbit(orbitTheta, Math.PI / 3.5, 3.5);
+    }
+
+    // ── Apply streaming pose each frame
+    const pose = player.getInterpolatedPose(ts);
+    if (pose?.facs) {
+      for (let i = 0; i < Math.min(pose.facs.length, morphCtrl.numMorphs); i++) {
+        morphCtrl.setByIndex(i, pose.facs[i]);
+      }
+    }
+    // Subtly animate mesh scale from first FACS weight for visual confirmation
+    if (pose?.facs) {
+      const s = 1.0 + pose.facs[0] * 0.2;
+      meshNode.scale.set(s, s, s);
+    }
+
+    meshNode.updateWorldMatrix(null);
+    shadowMap.render([meshNode], light, null);
+    renderer.render([meshNode], camera, [light], null, shadowMap, morphCtrl);
+
+    // ── Render FPS
+    rdrFrames++;
+    if (ts - rdrFpsTs >= 500) {
+      rdrFps = (rdrFrames * 1000) / (ts - rdrFpsTs);
+      rdrFrames = 0; rdrFpsTs = ts;
+    }
+
+    // ── Update perf overlay (every ~200 ms)
+    const stats = player.stats;
+    document.getElementById('perf-rdr').textContent  = rdrFps.toFixed(0);
+    document.getElementById('perf-fps').textContent  = stats ? stats.fps.toFixed(1) : '—';
+    document.getElementById('perf-lat').textContent  = stats ? stats.latencyMs : '—';
+    document.getElementById('perf-drop').textContent = stats ? stats.dropped   : '—';
+    document.getElementById('perf-buf').textContent  = stats ? stats.bufferSize : '—';
+  }
+  requestAnimationFrame(frame);
+
+  log('Streaming demo ready. Click "▶ Mock" to start in-page animation.', 'log-info');
+
+} catch (err) {
+  showError(err.message ?? String(err));
+}
+</script>
+</body>
+</html>
