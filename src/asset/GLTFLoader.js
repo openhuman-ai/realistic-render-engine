@@ -151,7 +151,7 @@ export class GLTFLoader {
     if (json.meshes) {
       for (const meshDef of json.meshes) {
         for (const prim of meshDef.primitives) {
-          const result = this._parsePrimitive(json, prim, buffers);
+          const result = this._parsePrimitive(json, prim, buffers, meshDef);
           if (result) meshes.push(result);
         }
       }
@@ -164,7 +164,7 @@ export class GLTFLoader {
   }
 
   /** @private */
-  _parsePrimitive(json, prim, buffers) {
+  _parsePrimitive(json, prim, buffers, meshDef = null) {
     const gl    = this.gl;
     const attrs = prim.attributes ?? {};
 
@@ -253,7 +253,13 @@ export class GLTFLoader {
     // Material
     const material = this._parseMaterial(json, prim.material);
 
-    return { vao, vertexBuffers, indexBuffer, indexCount, indexType, material, skinned };
+    // Morph targets — parse CPU-side float arrays (not uploaded to GPU here)
+    const morphTargets     = this._parseMorphTargets(json, prim, buffers);
+    const morphTargetNames = this._parseMorphTargetNames(meshDef, prim, morphTargets.length);
+    const vertexCount      = json.accessors[attrs.POSITION].count;
+
+    return { vao, vertexBuffers, indexBuffer, indexCount, indexType, material, skinned,
+             morphTargets, morphTargetNames, vertexCount };
   }
 
   /** @private */
@@ -317,6 +323,52 @@ export class GLTFLoader {
     if (exts.includes('KHR_texture_basisu')) {
       console.warn('[GLTFLoader] KHR_texture_basisu detected but not supported. Textures may not load correctly.');
     }
+  }
+
+  // --------------------------------------------------------------- morph targets
+  /**
+   * Parse glTF primitive morph targets into CPU-side float arrays.
+   * Returns an array of { position: Float32Array|null, normal: Float32Array|null } objects,
+   * one per morph target.
+   * @private
+   */
+  _parseMorphTargets(json, prim, buffers) {
+    const targets = prim.targets;
+    if (!targets || targets.length === 0) return [];
+
+    return targets.map(target => {
+      let position = null;
+      let normal   = null;
+
+      if (target.POSITION !== undefined) {
+        const acc = json.accessors[target.POSITION];
+        position  = new Float32Array(this._accessorToTypedArray(json, acc, buffers));
+      }
+      if (target.NORMAL !== undefined) {
+        const acc = json.accessors[target.NORMAL];
+        normal    = new Float32Array(this._accessorToTypedArray(json, acc, buffers));
+      }
+
+      return { position, normal };
+    });
+  }
+
+  /**
+   * Parse morph target names from mesh extras or primitive extras.
+   * glTF stores names in `mesh.extras.targetNames` or `prim.extras.targetNames`.
+   * @private
+   */
+  _parseMorphTargetNames(meshDef, prim, count) {
+    // Check mesh-level extras first, then primitive-level extras
+    const names = meshDef?.extras?.targetNames
+               ?? prim?.extras?.targetNames
+               ?? [];
+    // Pad / trim to match actual morph count
+    const result = [];
+    for (let i = 0; i < count; i++) {
+      result.push(names[i] ?? `morph_${i}`);
+    }
+    return result;
   }
 
   // ----------------------------------------------------------------- skins
@@ -424,7 +476,7 @@ export class GLTFLoader {
         if (!target || target.node === undefined) continue;
 
         const prop = target.path; // 'translation' | 'rotation' | 'scale' | 'weights'
-        if (prop === 'weights') continue; // handled in future morph PR
+        if (prop === 'weights') continue; // morph weight animation — handled by MorphController
 
         const interp = (sampler.interpolation ?? 'LINEAR').toUpperCase();
 
