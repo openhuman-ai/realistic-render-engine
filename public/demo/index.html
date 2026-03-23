@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHuman Engine — Deferred PBR + ACES Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0e10;
+      color: #e8e8e8;
+      font-family: system-ui, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+      border-bottom: 1px solid #333;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    header span.badge {
+      font-size: 0.7rem;
+      background: #1e6f3f;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    #canvas-wrapper {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    canvas:active { cursor: grabbing; }
+
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      color: #aaa;
+      pointer-events: none;
+      line-height: 1.8;
+    }
+
+    #fps { color: #6ef08a; font-weight: 600; }
+    #anim-state { color: #7ec8f8; }
+    #pipeline-label { color: #f0c060; font-weight: 600; }
+
+    /* ── Render controls panel (right side) */
+    #render-controls {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.75rem;
+      color: #ccc;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      min-width: 200px;
+    }
+
+    #render-controls .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #666;
+      border-bottom: 1px solid #333;
+      padding-bottom: 4px;
+      margin-bottom: 2px;
+    }
+
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .ctrl-row label { flex: 1; }
+
+    .toggle-btn {
+      font-size: 0.72rem;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid #4a9d6f;
+      background: rgba(30, 80, 50, 0.85);
+      color: #aaffcc;
+      min-width: 36px;
+      text-align: center;
+    }
+    .toggle-btn.off {
+      border-color: #7a3a3a;
+      background: rgba(70, 30, 30, 0.85);
+      color: #ffaaaa;
+    }
+
+    input[type="range"] {
+      width: 90px;
+      accent-color: #6ef08a;
+      cursor: pointer;
+    }
+
+    #exposure-val {
+      color: #6ef08a;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    /* ── Animation controls (bottom-centre) */
+    #controls {
+      position: absolute;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      background: rgba(40, 80, 160, 0.85);
+      border: 1px solid #4a8adf;
+      color: #ddeeff;
+      font-size: 0.8rem;
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(60, 110, 200, 0.9); }
+
+    #controls-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.45);
+      border-radius: 6px;
+      padding: 5px 14px;
+      font-size: 0.7rem;
+      color: #888;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #error-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      color: #f88;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      padding: 24px;
+      text-align: center;
+    }
+
+    /* ── FACS Slider Panel (left side, PR #5) */
+    #facs-panel {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      width: 230px;
+      max-height: calc(100% - 100px);
+      background: rgba(10,12,16,0.88);
+      border: 1px solid #2a2e38;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.72rem;
+      color: #c8ccd8;
+      overflow: hidden;
+      z-index: 20;
+      /* Hide by default — toggled by #btn-facs */
+      transform: translateX(-110%);
+      transition: transform 0.22s ease;
+    }
+    #facs-panel.open { transform: translateX(0); }
+
+    #facs-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.04);
+      border-bottom: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #facs-panel-header span {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8a9;
+      font-weight: 600;
+    }
+    #btn-facs-reset {
+      font-size: 0.65rem;
+      padding: 2px 8px;
+      background: rgba(60,30,30,0.8);
+      border: 1px solid #7a3a3a;
+      border-radius: 4px;
+      color: #ffaaaa;
+      cursor: pointer;
+    }
+    #btn-facs-reset:hover { background: rgba(90,40,40,0.9); }
+
+    #facs-scroll {
+      overflow-y: auto;
+      flex: 1;
+      padding: 6px 0;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+    }
+    #facs-scroll::-webkit-scrollbar { width: 4px; }
+    #facs-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+    .facs-group-label {
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #556;
+      padding: 6px 12px 2px;
+      border-top: 1px solid #1e2228;
+      margin-top: 4px;
+    }
+    .facs-group-label:first-child { border-top: none; margin-top: 0; }
+
+    .facs-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px 2px 12px;
+    }
+    .facs-row label {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #aab;
+      font-size: 0.68rem;
+      cursor: default;
+    }
+    .facs-row input[type="range"] {
+      width: 70px;
+      accent-color: #7ec8f8;
+      cursor: pointer;
+      height: 3px;
+    }
+    .facs-val {
+      width: 26px;
+      text-align: right;
+      color: #7ec8f8;
+      font-size: 0.66rem;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+
+    /* Toggle button for FACS panel — bottom-left */
+    #btn-facs-toggle {
+      position: absolute;
+      bottom: 60px;
+      left: 14px;
+      font-size: 0.72rem;
+      padding: 5px 12px;
+      background: rgba(20,50,80,0.9);
+      border: 1px solid #2a6aaf;
+      border-radius: 4px;
+      color: #7ec8f8;
+      cursor: pointer;
+      z-index: 21;
+    }
+    #btn-facs-toggle:hover { background: rgba(30,70,110,0.95); }
+
+    /* Shift HUD down when FACS panel is open so they don't overlap */
+    #facs-panel.open ~ #hud { top: auto; bottom: 90px; }
+
+    @media (max-width: 600px) {
+      #facs-panel { width: 190px; }
+      .facs-row input[type="range"] { width: 52px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>OpenHuman Engine</h1>
+  <span class="badge">WebGL 2.0</span>
+  <span class="badge" style="background:#2c4a8c;">Zero deps</span>
+  <span class="badge" style="background:#5a2c8c;">GPU DQ Skinning</span>
+  <!-- Path label — updated at runtime to reflect active renderer -->
+  <span class="badge" id="path-badge" style="background:#7a3c1c;">Deferred PBR · G-buffer · PCF · ACES</span>
+</header>
+
+<div id="canvas-wrapper">
+  <canvas id="gl-canvas"></canvas>
+
+  <!-- HUD (top-left) -->
+  <div id="hud">
+    <div>FPS: <span id="fps">—</span></div>
+    <div>Anim: <span id="anim-state">—</span></div>
+    <div>Path: <span id="pipeline-label">—</span></div>
+    <div id="renderer-info" style="color:#888;font-size:0.7rem;">Initialising…</div>
+  </div>
+
+  <!-- Render controls (top-right) -->
+  <div id="render-controls">
+    <div class="section-title">Render Controls</div>
+
+    <!-- Exposure -->
+    <div class="ctrl-row">
+      <label>Exposure</label>
+      <input type="range" id="exposure-slider" min="0.1" max="4.0" step="0.05" value="1.0" />
+      <span id="exposure-val">1.00</span>
+    </div>
+
+    <!-- Shadow PCF toggle -->
+    <div class="ctrl-row">
+      <label>Shadows (PCF)</label>
+      <button class="toggle-btn" id="btn-shadow">ON</button>
+    </div>
+
+    <!-- IBL toggle -->
+    <div class="ctrl-row">
+      <label>IBL Ambient</label>
+      <button class="toggle-btn off" id="btn-ibl">OFF</button>
+    </div>
+
+    <!-- ACES tonemap toggle -->
+    <div class="ctrl-row">
+      <label>ACES Tonemap</label>
+      <button class="toggle-btn" id="btn-aces">ON</button>
+    </div>
+
+    <!-- Pipeline toggle: Deferred ↔ Forward -->
+    <div class="ctrl-row">
+      <label>Pipeline</label>
+      <button class="toggle-btn" id="btn-pipeline" style="min-width:68px;">Deferred</button>
+    </div>
+
+    <div class="section-title" style="margin-top:6px;">Advanced Shading</div>
+
+    <div class="ctrl-row">
+      <label>Skin SSS</label>
+      <button class="toggle-btn off" id="btn-sss">OFF</button>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Strength</label>
+      <input type="range" id="sss-strength" min="0.0" max="1.0" step="0.02" value="0.45" />
+      <span id="sss-strength-val">0.45</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Width</label>
+      <input type="range" id="sss-width" min="0.5" max="5.0" step="0.1" value="2.0" />
+      <span id="sss-width-val">2.0</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color R</label>
+      <input type="range" id="sss-r" min="0.0" max="2.0" step="0.05" value="1.0" />
+      <span id="sss-r-val">1.00</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color G</label>
+      <input type="range" id="sss-g" min="0.0" max="2.0" step="0.05" value="0.45" />
+      <span id="sss-g-val">0.45</span>
+    </div>
+    <div class="ctrl-row">
+      <label>SSS Color B</label>
+      <input type="range" id="sss-b" min="0.0" max="2.0" step="0.05" value="0.18" />
+      <span id="sss-b-val">0.18</span>
+    </div>
+
+    <div class="ctrl-row">
+      <label>Eye Shader</label>
+      <button class="toggle-btn" id="btn-eye">ON</button>
+    </div>
+    <div class="ctrl-row">
+      <label>Iris Size</label>
+      <input type="range" id="eye-iris" min="0.12" max="0.45" step="0.01" value="0.30" />
+      <span id="eye-iris-val">0.30</span>
+    </div>
+
+    <div class="ctrl-row">
+      <label>Hair Shader</label>
+      <button class="toggle-btn" id="btn-hair">ON</button>
+    </div>
+    <div class="ctrl-row">
+      <label>Hair Aniso</label>
+      <input type="range" id="hair-spec" min="16" max="128" step="1" value="80" />
+      <span id="hair-spec-val">80</span>
+    </div>
+  </div>
+
+  <!-- Animation controls (bottom-centre) -->
+  <div id="controls">
+    <button id="btn-idle">▶ Idle</button>
+    <button id="btn-talk">💬 Talk</button>
+  </div>
+
+  <!-- FACS slider panel (left, PR #5) — populated by JS below -->
+  <div id="facs-panel">
+    <div id="facs-panel-header">
+      <span>FACS Blendshapes</span>
+      <button id="btn-facs-reset" title="Reset all FACS weights to 0">Reset</button>
+    </div>
+    <div id="facs-scroll">
+      <!-- Rows injected by buildFACSPanel() -->
+    </div>
+  </div>
+
+  <!-- Toggle button for FACS panel -->
+  <button id="btn-facs-toggle" title="Toggle FACS blendshape panel">🎭 FACS</button>
+
+  <div id="controls-hint">
+    🖱 Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Touch supported
+  </div>
+
+  <div id="error-overlay">
+    <div id="error-msg"></div>
+  </div>
+</div>
+
+<script type="module" src="./index.js"></script>
+</body>
+</html>

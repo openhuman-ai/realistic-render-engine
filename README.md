@@ -6,7 +6,7 @@ A pure **WebGL 2.0** digital human render engine with **zero runtime dependencie
 
 ```bash
 npm install
-npm run serve
+npm run dev
 # Open http://localhost:8080/demo/index.html
 ```
 
@@ -14,7 +14,15 @@ npm run serve
 
 ```bash
 npm run dev
-# Open http://localhost:8080
+# Main demo: http://localhost:8080/demo/index.html
+# Streaming demo: http://localhost:8080/demo/streaming.html
+```
+
+## Production Build
+
+```bash
+npm run build
+npm run preview
 ```
 
 ## Architecture
@@ -28,7 +36,12 @@ npm run dev
 
 ## Demo
 
-Open `demo/index.html` in a browser (requires a local server for ES module support).
+Open `/demo/index.html` in a browser (served from `public/demo`).
+
+The demos now run through Vite with vanilla JavaScript entry modules:
+
+- `public/demo/index.html` loads `demo/index.js`
+- `public/demo/streaming.html` loads `demo/streaming.js`
 
 ## Constraints
 

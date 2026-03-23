@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHuman Demos</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1a2230 0%, #0d0e10 60%);
+      color: #e8e8e8;
+      font-family: system-ui, sans-serif;
+    }
+    main {
+      width: min(760px, 92vw);
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid #2b3240;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    h1 { margin: 0 0 8px; font-size: 1.4rem; }
+    p { margin: 0 0 18px; color: #b8c0d8; }
+    .links { display: flex; gap: 10px; flex-wrap: wrap; }
+    a {
+      color: #dce9ff;
+      text-decoration: none;
+      border: 1px solid #3d5f92;
+      background: rgba(44, 74, 140, 0.65);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+    a:hover { background: rgba(63, 98, 180, 0.75); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>OpenHuman Vite Workspace</h1>
+    <p>Select a demo page:</p>
+    <div class="links">
+      <a href="/demo/index.html">Deferred PBR Demo</a>
+      <a href="/demo/streaming.html">Streaming Demo</a>
+    </div>
+  </main>
+</body>
+</html>

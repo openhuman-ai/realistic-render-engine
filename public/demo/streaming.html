@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHuman Engine — Streaming Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0c0d10;
+      color: #e0e2ea;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: rgba(0,0,0,0.65);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #2a2e38;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: 0.03em; }
+    .badge {
+      font-size: 0.68rem;
+      background: #1e6f3f;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    #conn-badge {
+      font-size: 0.68rem;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: #5a2222;
+      color: #ffaaaa;
+      transition: background 0.2s, color 0.2s;
+    }
+    #conn-badge.connected { background: #1e5a2c; color: #aaffcc; }
+    #conn-badge.reconnecting { background: #4a3a10; color: #ffddaa; }
+
+    /* ── Layout */
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Canvas column */
+    #canvas-col {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    canvas:active { cursor: grabbing; }
+
+    /* ── Performance overlay */
+    #perf-overlay {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #2a2e38;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 0.72rem;
+      color: #aaa;
+      line-height: 2;
+      pointer-events: none;
+      min-width: 190px;
+    }
+    #perf-overlay .lbl  { color: #667; }
+    #perf-fps    { color: #6ef08a; font-weight: 600; }
+    #perf-lat    { color: #f0c860; font-weight: 600; }
+    #perf-drop   { color: #f08070; font-weight: 600; }
+    #perf-buf    { color: #7ec8f8; }
+    #perf-rdr    { color: #c8aaf8; }
+
+    /* ── Right sidebar */
+    #sidebar {
+      width: 320px;
+      background: rgba(14,16,20,0.95);
+      border-left: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* ── Connect section */
+    #connect-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    #connect-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      border-bottom: 1px solid #2a2e38;
+      padding-bottom: 5px;
+    }
+    #url-input {
+      width: 100%;
+      background: #111318;
+      border: 1px solid #2e3340;
+      border-radius: 4px;
+      color: #cdd;
+      font-size: 0.75rem;
+      padding: 5px 9px;
+      font-family: monospace;
+    }
+    #url-input:focus { outline: 1px solid #3a7adf; }
+
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row label { font-size: 0.72rem; color: #99a; flex: 1; }
+
+    select {
+      background: #111318;
+      border: 1px solid #2e3340;
+      border-radius: 4px;
+      color: #cdd;
+      font-size: 0.72rem;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    button {
+      font-size: 0.75rem;
+      padding: 5px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid #3a7adf;
+      background: rgba(30,60,130,0.85);
+      color: #aaccff;
+    }
+    button:hover { background: rgba(50,90,180,0.9); }
+    button.danger {
+      border-color: #7a3a3a;
+      background: rgba(70,20,20,0.85);
+      color: #ffaaaa;
+    }
+    button.danger:hover { background: rgba(100,30,30,0.9); }
+
+    #btn-mock {
+      border-color: #4a9d6f;
+      background: rgba(20,60,40,0.85);
+      color: #aaffcc;
+    }
+    #btn-mock:hover { background: rgba(30,80,55,0.9); }
+
+    /* ── Jitter buffer controls */
+    #jitter-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #2a2e38;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #jitter-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      border-bottom: 1px solid #2a2e38;
+      padding-bottom: 5px;
+    }
+    input[type="range"] {
+      width: 120px;
+      accent-color: #6ef08a;
+      cursor: pointer;
+    }
+    .val-lbl { font-size: 0.7rem; color: #6ef08a; min-width: 36px; text-align: right; }
+
+    /* ── Console log */
+    #log-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #log-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      padding: 10px 16px 6px;
+      border-bottom: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      font-size: 0.68rem;
+      font-family: monospace;
+      color: #8a9aaa;
+      padding: 8px 12px;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+    }
+    #log::-webkit-scrollbar { width: 4px; }
+    #log::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .log-info  { color: #7ec8f8; }
+    .log-ok    { color: #6ef08a; }
+    .log-warn  { color: #f0c860; }
+    .log-err   { color: #f08070; }
+    .log-data  { color: #a0a0c0; }
+
+    /* ── Embed section */
+    #embed-section {
+      padding: 12px 16px;
+      border-top: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #embed-section .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #2a2e38;
+      margin-bottom: 8px;
+    }
+    pre#embed-code {
+      background: #0a0b0d;
+      border: 1px solid #1e2228;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 0.62rem;
+      color: #9ab;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.55;
+    }
+    #btn-copy-embed {
+      margin-top: 6px;
+      font-size: 0.68rem;
+      padding: 3px 10px;
+      border-color: #4a5a7f;
+      background: rgba(20,30,60,0.8);
+      color: #99aadd;
+    }
+
+    #error-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      color: #f88;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      padding: 24px;
+      text-align: center;
+      z-index: 30;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>OpenHuman Engine</h1>
+  <span class="badge">WebGL 2.0</span>
+  <span class="badge" style="background:#2c4a8c;">Zero deps</span>
+  <span class="badge" style="background:#1a4a6c;">Streaming</span>
+  <span id="conn-badge">Disconnected</span>
+</header>
+
+<div id="main">
+
+  <!-- Canvas + overlay -->
+  <div id="canvas-col">
+    <canvas id="gl-canvas"></canvas>
+
+    <!-- Performance overlay -->
+    <div id="perf-overlay">
+      <div><span class="lbl">Render FPS: </span><span id="perf-rdr">—</span></div>
+      <div><span class="lbl">Stream FPS: </span><span id="perf-fps">—</span></div>
+      <div><span class="lbl">Latency:    </span><span id="perf-lat">—</span> <span class="lbl">ms</span></div>
+      <div><span class="lbl">Dropped:    </span><span id="perf-drop">0</span></div>
+      <div><span class="lbl">Buffer:     </span><span id="perf-buf">0</span> <span class="lbl">frames</span></div>
+    </div>
+
+    <div id="error-overlay">
+      <div id="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- Right sidebar -->
+  <div id="sidebar">
+
+    <!-- Connection controls -->
+    <div id="connect-section">
+      <div class="section-title">Connection</div>
+
+      <input type="text" id="url-input"
+        placeholder="ws://localhost:8765 or http://…"
+        value="ws://localhost:8765" />
+
+      <div class="row">
+        <label>Transport</label>
+        <select id="transport-sel">
+          <option value="ws"   selected>WebSocket</option>
+          <option value="http">HTTP stream</option>
+        </select>
+      </div>
+
+      <div class="row" style="gap:6px;">
+        <button id="btn-connect">Connect</button>
+        <button id="btn-disconnect" class="danger">Disconnect</button>
+        <button id="btn-mock" title="Start a local mock source in-page">▶ Mock</button>
+      </div>
+    </div>
+
+    <!-- Jitter buffer controls -->
+    <div id="jitter-section">
+      <div class="section-title">Jitter Buffer</div>
+      <div class="row">
+        <label>Target Delay</label>
+        <input type="range" id="delay-slider" min="0" max="300" step="5" value="60" />
+        <span class="val-lbl" id="delay-val">60 ms</span>
+      </div>
+      <div class="row">
+        <label>Smoothing α</label>
+        <input type="range" id="smooth-slider" min="0.01" max="0.5" step="0.01" value="0.15" />
+        <span class="val-lbl" id="smooth-val">0.15</span>
+      </div>
+    </div>
+
+    <!-- Console log -->
+    <div id="log-section">
+      <div class="section-title">Console</div>
+      <div id="log"></div>
+    </div>
+
+    <!-- Embed API snippet -->
+    <div id="embed-section">
+      <div class="section-title">Embed / API Snippet</div>
+      <pre id="embed-code"><!-- populated by JS --></pre>
+      <button id="btn-copy-embed">📋 Copy</button>
+    </div>
+
+  </div>
+</div>
+
+<script type="module" src="./streaming.js"></script>
+</body>
+</html>

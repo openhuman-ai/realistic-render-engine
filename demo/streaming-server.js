@@ -22,7 +22,7 @@
 
 'use strict';
 
-const { WebSocketServer } = require('ws');
+import { WebSocketServer } from 'ws';
 const PORT         = 8765;
 const JOINT_COUNT  = 3;
 const FACS_COUNT   = 52;
