@@ -184,6 +184,130 @@
       padding: 24px;
       text-align: center;
     }
+
+    /* ── FACS Slider Panel (left side, PR #5) */
+    #facs-panel {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      width: 230px;
+      max-height: calc(100% - 100px);
+      background: rgba(10,12,16,0.88);
+      border: 1px solid #2a2e38;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.72rem;
+      color: #c8ccd8;
+      overflow: hidden;
+      z-index: 20;
+      /* Hide by default — toggled by #btn-facs */
+      transform: translateX(-110%);
+      transition: transform 0.22s ease;
+    }
+    #facs-panel.open { transform: translateX(0); }
+
+    #facs-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.04);
+      border-bottom: 1px solid #2a2e38;
+      flex-shrink: 0;
+    }
+    #facs-panel-header span {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8a9;
+      font-weight: 600;
+    }
+    #btn-facs-reset {
+      font-size: 0.65rem;
+      padding: 2px 8px;
+      background: rgba(60,30,30,0.8);
+      border: 1px solid #7a3a3a;
+      border-radius: 4px;
+      color: #ffaaaa;
+      cursor: pointer;
+    }
+    #btn-facs-reset:hover { background: rgba(90,40,40,0.9); }
+
+    #facs-scroll {
+      overflow-y: auto;
+      flex: 1;
+      padding: 6px 0;
+      scrollbar-width: thin;
+      scrollbar-color: #333 transparent;
+    }
+    #facs-scroll::-webkit-scrollbar { width: 4px; }
+    #facs-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+    .facs-group-label {
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #556;
+      padding: 6px 12px 2px;
+      border-top: 1px solid #1e2228;
+      margin-top: 4px;
+    }
+    .facs-group-label:first-child { border-top: none; margin-top: 0; }
+
+    .facs-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px 2px 12px;
+    }
+    .facs-row label {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #aab;
+      font-size: 0.68rem;
+      cursor: default;
+    }
+    .facs-row input[type="range"] {
+      width: 70px;
+      accent-color: #7ec8f8;
+      cursor: pointer;
+      height: 3px;
+    }
+    .facs-val {
+      width: 26px;
+      text-align: right;
+      color: #7ec8f8;
+      font-size: 0.66rem;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+
+    /* Toggle button for FACS panel — bottom-left */
+    #btn-facs-toggle {
+      position: absolute;
+      bottom: 60px;
+      left: 14px;
+      font-size: 0.72rem;
+      padding: 5px 12px;
+      background: rgba(20,50,80,0.9);
+      border: 1px solid #2a6aaf;
+      border-radius: 4px;
+      color: #7ec8f8;
+      cursor: pointer;
+      z-index: 21;
+    }
+    #btn-facs-toggle:hover { background: rgba(30,70,110,0.95); }
+
+    /* Shift HUD down when FACS panel is open so they don't overlap */
+    #facs-panel.open ~ #hud { top: auto; bottom: 90px; }
+
+    @media (max-width: 600px) {
+      #facs-panel { width: 190px; }
+      .facs-row input[type="range"] { width: 52px; }
+    }
   </style>
 </head>
 <body>
@@ -301,6 +425,20 @@
     <button id="btn-idle">▶ Idle</button>
     <button id="btn-talk">💬 Talk</button>
   </div>
+
+  <!-- FACS slider panel (left, PR #5) — populated by JS below -->
+  <div id="facs-panel">
+    <div id="facs-panel-header">
+      <span>FACS Blendshapes</span>
+      <button id="btn-facs-reset" title="Reset all FACS weights to 0">Reset</button>
+    </div>
+    <div id="facs-scroll">
+      <!-- Rows injected by buildFACSPanel() -->
+    </div>
+  </div>
+
+  <!-- Toggle button for FACS panel -->
+  <button id="btn-facs-toggle" title="Toggle FACS blendshape panel">🎭 FACS</button>
 
   <div id="controls-hint">
     🖱 Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Touch supported
@@ -842,6 +980,90 @@ try {
     graph.setBool('isTalking', true);
     stateEl.textContent = 'talk (crossfading…)';
     setTimeout(() => { if (stateEl.textContent.startsWith('talk')) stateEl.textContent = 'talk'; }, 380);
+  });
+
+  // ── FACS Slider Panel (PR #5)
+  // Groups matching the canonical FACS_NAMES order
+  const FACS_GROUPS = [
+    { label: 'Brow', names: ['browDownLeft','browDownRight','browInnerUp','browOuterUpLeft','browOuterUpRight'] },
+    { label: 'Cheek', names: ['cheekPuff','cheekSquintLeft','cheekSquintRight'] },
+    { label: 'Eye — Blink & Squint', names: ['eyeBlinkLeft','eyeBlinkRight','eyeSquintLeft','eyeSquintRight','eyeWideLeft','eyeWideRight'] },
+    { label: 'Eye — Look', names: ['eyeLookDownLeft','eyeLookDownRight','eyeLookInLeft','eyeLookInRight','eyeLookOutLeft','eyeLookOutRight','eyeLookUpLeft','eyeLookUpRight'] },
+    { label: 'Jaw', names: ['jawForward','jawLeft','jawRight','jawOpen','mouthClose'] },
+    { label: 'Mouth — Shape', names: ['mouthFunnel','mouthPucker','mouthLeft','mouthRight','mouthRollLower','mouthRollUpper','mouthShrugLower','mouthShrugUpper'] },
+    { label: 'Mouth — Smile / Frown', names: ['mouthSmileLeft','mouthSmileRight','mouthFrownLeft','mouthFrownRight','mouthDimpleLeft','mouthDimpleRight'] },
+    { label: 'Mouth — Stretch / Press', names: ['mouthStretchLeft','mouthStretchRight','mouthPressLeft','mouthPressRight'] },
+    { label: 'Mouth — Upper / Lower', names: ['mouthUpperUpLeft','mouthUpperUpRight','mouthLowerDownLeft','mouthLowerDownRight'] },
+    { label: 'Nose', names: ['noseSneerLeft','noseSneerRight'] },
+    { label: 'Tongue', names: ['tongueOut'] },
+  ];
+
+  /** Build the FACS panel rows and wire slider events. */
+  function buildFACSPanel() {
+    const scroll = document.getElementById('facs-scroll');
+    scroll.innerHTML = '';
+    const sliderMap = new Map(); // name → { slider, valEl }
+
+    for (const group of FACS_GROUPS) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'facs-group-label';
+      groupEl.textContent = group.label;
+      scroll.appendChild(groupEl);
+
+      for (const name of group.names) {
+        const row = document.createElement('div');
+        row.className = 'facs-row';
+
+        const label = document.createElement('label');
+        label.title = name;
+        // Shorten camelCase for display: insert spaces before uppercase
+        label.textContent = name.replace(/([A-Z])/g, ' $1').trim();
+
+        const slider = document.createElement('input');
+        slider.type  = 'range';
+        slider.min   = '0';
+        slider.max   = '1';
+        slider.step  = '0.01';
+        slider.value = '0';
+
+        const valEl = document.createElement('span');
+        valEl.className = 'facs-val';
+        valEl.textContent = '0.00';
+
+        slider.addEventListener('input', () => {
+          const w = parseFloat(slider.value);
+          valEl.textContent = w.toFixed(2);
+          morphCtrl.set(name, w);
+        });
+
+        row.appendChild(label);
+        row.appendChild(slider);
+        row.appendChild(valEl);
+        scroll.appendChild(row);
+        sliderMap.set(name, { slider, valEl });
+      }
+    }
+
+    // Reset all
+    document.getElementById('btn-facs-reset').addEventListener('click', () => {
+      for (const [name, { slider, valEl }] of sliderMap) {
+        slider.value = '0';
+        valEl.textContent = '0.00';
+        morphCtrl.set(name, 0);
+      }
+    });
+
+    return sliderMap;
+  }
+
+  buildFACSPanel();
+
+  // FACS panel open/close toggle
+  const facsPanel  = document.getElementById('facs-panel');
+  const facsBtnTgl = document.getElementById('btn-facs-toggle');
+  facsBtnTgl.addEventListener('click', () => {
+    facsPanel.classList.toggle('open');
+    facsBtnTgl.textContent = facsPanel.classList.contains('open') ? '✕ Close FACS' : '🎭 FACS';
   });
 
   // ── Render loop
